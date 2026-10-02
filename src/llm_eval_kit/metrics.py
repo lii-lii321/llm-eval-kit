@@ -4,8 +4,8 @@
 """
 
 import math
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Iterable, Sequence
 
 
 def recall_at_k(ranked: Sequence[str], relevant: Iterable[str], k: int) -> float:

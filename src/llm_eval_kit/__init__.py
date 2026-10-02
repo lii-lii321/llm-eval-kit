@@ -1,10 +1,10 @@
 """llm-eval-kit：离线可跑的 RAG 检索与 LLM 应用评测工具库。"""
 
 from .attribution import (
-    Badcase,
     REASON_CORPUS_MISSING,
     REASON_KEYWORD_MISMATCH,
     REASON_SEMANTIC_DRIFT,
+    Badcase,
     attribute_badcases,
     summarize_attribution,
 )
@@ -32,7 +32,7 @@ from .metrics import (
 )
 from .pipeline import run_evaluation, run_retrieval
 from .report import ReportData, render_html, render_markdown, write_reports
-from .retrieval import BM25Retriever, BaseRetriever, HybridRetriever, RetrievalResult, TFRetriever
+from .retrieval import BaseRetriever, BM25Retriever, HybridRetriever, RetrievalResult, TFRetriever
 from .synth import EvalCase, extract_phrases, generate_eval_set
 from .tokenize import tokenize
 

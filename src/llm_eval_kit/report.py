@@ -138,7 +138,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
 <main>
 <h1>LLM/RAG 评测报告</h1>
-<p class="meta">生成时间 {generated_at} ｜ 语料文档数 {corpus_size} ｜ 评测集规模 {eval_size} ｜ 检索深度 top-K {top_k}</p>
+<p class="meta">生成时间 {generated_at} ｜ 语料 {corpus_size} 篇 ｜ 评测集 {eval_size} 条 ｜ 检索深度 top-K {top_k}</p>
 {sections}
 </main>
 </body>
@@ -182,7 +182,8 @@ def render_html(data: ReportData) -> str:
             f"{html_mod.escape(b.query)} —— {html_mod.escape(b.detail)}</li>"
             for b in data.primary_badcases
         )
-        sections.append(f"<h3>未命中示例（主管线：{html_mod.escape(data.primary.name)}，最多 5 条）</h3><ul>{items}</ul>")
+        heading = f"<h3>未命中示例（主管线：{html_mod.escape(data.primary.name)}，最多 5 条）</h3>"
+        sections.append(f"{heading}<ul>{items}</ul>")
 
     if data.judge.skipped:
         sections.append(

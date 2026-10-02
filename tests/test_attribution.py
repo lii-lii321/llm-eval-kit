@@ -2,10 +2,10 @@ from llm_eval_kit.attribution import (
     REASON_CORPUS_MISSING,
     REASON_KEYWORD_MISMATCH,
     REASON_SEMANTIC_DRIFT,
+    Badcase,
     attribute_badcases,
     summarize_attribution,
 )
-from llm_eval_kit.attribution import Badcase
 from llm_eval_kit.synth import EvalCase
 
 DOCS = {
