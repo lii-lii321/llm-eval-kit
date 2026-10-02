@@ -130,3 +130,75 @@ class TestRunEvaluation:
         md = render_markdown(data)
         assert "## 检索指标" in md
         assert "badcase" in md
+
+
+class TestBootstrapConfidence:
+    def test_ci_fields_populated(self, toy_docs):
+        cases = generate_eval_set(toy_docs, num_cases=5, seed=5)
+        metrics = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3)
+        assert set(metrics.recall_ci) == set(metrics.ks)
+        assert metrics.mrr_ci is not None
+        assert metrics.ndcg_ci is not None
+        assert metrics.hit_rate_ci is not None
+        for ci in [*metrics.recall_ci.values(), metrics.mrr_ci, metrics.ndcg_ci, metrics.hit_rate_ci]:
+            assert 0.0 <= ci.low <= ci.high <= 1.0
+
+    def test_point_estimate_unchanged_by_bootstrap(self, toy_docs):
+        """聚合指标本身不因引入置信区间而改变。"""
+        cases = generate_eval_set(toy_docs, num_cases=5, seed=5)
+        metrics = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3, n_boot=0)
+        again = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3)
+        assert metrics.recall == again.recall
+        assert metrics.mrr == again.mrr
+        assert metrics.ndcg == again.ndcg
+        assert metrics.hit_rate == again.hit_rate
+
+    def test_perfect_case_degenerate_ci(self, toy_docs):
+        cases = [EvalCase(qid="q1", query="BM25 词频", relevant_ids=["d01"])]
+        metrics = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3)
+        assert metrics.mrr_ci is not None
+        assert metrics.mrr_ci.low == pytest.approx(1.0)
+        assert metrics.mrr_ci.high == pytest.approx(1.0)
+
+    def test_same_seed_reproducible_ci(self, toy_docs):
+        cases = generate_eval_set(toy_docs, num_cases=6, seed=5)
+        first = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3, seed=9)
+        second = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3, seed=9)
+        assert first.mrr_ci == second.mrr_ci
+        assert first.recall_ci == second.recall_ci
+
+    def test_pipelines_share_resamples_for_same_seed(self, toy_docs):
+        """所有管线共用同一 seed 与评测集规模，置信区间可直接横向对比。"""
+        cases = generate_eval_set(toy_docs, num_cases=6, seed=5)
+        data = run_evaluation(cases, {"bm25": BM25Retriever(toy_docs), "tf": TFRetriever(toy_docs)}, top_k=3)
+        levels = {p.mrr_ci.level for p in data.pipelines if p.mrr_ci is not None}
+        boots = {p.mrr_ci.n_boot for p in data.pipelines if p.mrr_ci is not None}
+        assert levels == {0.95}
+        assert boots == {1000}
+
+    def test_n_boot_zero_disables_ci(self, toy_docs):
+        cases = generate_eval_set(toy_docs, num_cases=3, seed=5)
+        metrics = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3, n_boot=0)
+        assert metrics.recall_ci == {}
+        assert metrics.mrr_ci is None
+        assert metrics.ndcg_ci is None
+        assert metrics.hit_rate_ci is None
+
+    def test_empty_cases_skip_ci(self, toy_docs):
+        metrics = run_retrieval([], BM25Retriever(toy_docs), top_k=3)
+        assert metrics.recall_ci == {}
+        assert metrics.mrr_ci is None
+
+    def test_markdown_renders_ci_and_legend(self, toy_docs):
+        cases = generate_eval_set(toy_docs, num_cases=4, seed=5)
+        data = run_evaluation(cases, {"bm25": BM25Retriever(toy_docs)}, top_k=3)
+        md = render_markdown(data)
+        assert "bootstrap 置信区间" in md
+        assert "[" in md and "]" in md
+
+    def test_markdown_without_ci_has_no_legend(self, toy_docs):
+        cases = generate_eval_set(toy_docs, num_cases=4, seed=5)
+        data = run_evaluation(cases, {"bm25": BM25Retriever(toy_docs)}, top_k=3, n_boot=0)
+        md = render_markdown(data)
+        assert "bootstrap 置信区间" not in md
+        assert "[" not in md.split("## 检索指标")[1].split("##")[0]

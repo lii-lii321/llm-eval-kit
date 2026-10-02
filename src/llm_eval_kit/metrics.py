@@ -1,9 +1,10 @@
-"""检索评测指标：Recall@K、MRR、NDCG@10 与延迟分位数统计。
+"""检索评测指标：Recall@K、MRR、NDCG@10、bootstrap 置信区间与延迟分位数统计。
 
 相关度采用二元定义（命中/未命中），NDCG 因此是 binary NDCG。
 """
 
 import math
+import random
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
@@ -56,6 +57,53 @@ def percentile(values: Sequence[float], p: float) -> float:
     return ordered[lo] * (1 - weight) + ordered[hi] * weight
 
 
+@dataclass(frozen=True)
+class ConfidenceInterval:
+    """bootstrap 百分位置信区间（对样本均值）。"""
+
+    low: float
+    high: float
+    level: float = 0.95
+    n_boot: int = 1000
+
+
+def bootstrap_ci(
+    values: Sequence[float],
+    *,
+    n_boot: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 42,
+) -> ConfidenceInterval:
+    """对样本均值做 bootstrap 重采样，返回百分位置信区间。
+
+    相同 values + 相同 seed 产出完全相同的区间（可复现）；
+    不同检索管线传入相同 seed 时重采样索引一致，区间可直接横向对比。
+    """
+    if not values:
+        raise ValueError("values 不能为空")
+    if n_boot <= 0:
+        raise ValueError("n_boot 必须为正整数")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence 取值范围 (0, 1)")
+
+    data = [float(v) for v in values]
+    rng = random.Random(seed)
+    n = len(data)
+    means: list[float] = []
+    for _ in range(n_boot):
+        total = 0.0
+        for _ in range(n):
+            total += data[rng.randrange(n)]
+        means.append(total / n)
+    alpha = (1.0 - confidence) / 2.0
+    return ConfidenceInterval(
+        low=percentile(means, alpha * 100),
+        high=percentile(means, (1.0 - alpha) * 100),
+        level=confidence,
+        n_boot=n_boot,
+    )
+
+
 @dataclass
 class LatencyStats:
     """单条查询耗时的分布统计（单位毫秒）。"""
@@ -91,4 +139,9 @@ class PipelineMetrics:
     mrr: float = 0.0
     ndcg: float = 0.0  # NDCG@10
     hit_rate: float = 0.0  # top-K 内至少命中一条相关文档的查询占比
+    recall_ci: dict[int, ConfidenceInterval] = field(default_factory=dict)
+    mrr_ci: ConfidenceInterval | None = None
+    ndcg_ci: ConfidenceInterval | None = None
+    hit_rate_ci: ConfidenceInterval | None = None
     latency: LatencyStats = field(default_factory=LatencyStats)
+    # *_ci：对应聚合指标的 bootstrap 置信区间；评测集为空或关闭重采样时为空/None

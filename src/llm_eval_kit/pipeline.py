@@ -7,7 +7,14 @@ from datetime import datetime
 
 from .attribution import Badcase, attribute_badcases, summarize_attribution
 from .judge import JudgeProvider, JudgeScore, JudgeSummary, LLMJudgeError, judge_summary
-from .metrics import PipelineMetrics, latency_stats, mrr, ndcg_at_k, recall_at_k
+from .metrics import (
+    PipelineMetrics,
+    bootstrap_ci,
+    latency_stats,
+    mrr,
+    ndcg_at_k,
+    recall_at_k,
+)
 from .report import ReportData
 from .retrieval import BaseRetriever, RetrievalResult
 from .synth import EvalCase
@@ -40,18 +47,40 @@ def _build_metrics(
     *,
     top_k: int,
     ks: tuple[int, ...],
+    seed: int,
+    n_boot: int,
+    confidence: float,
 ) -> PipelineMetrics:
-    """基于已收集的检索结果聚合指标（不做任何检索）。"""
+    """基于已收集的检索结果聚合指标（不做任何检索），并给出 bootstrap 置信区间。"""
     ranked_ids = {qid: [r.doc_id for r in results] for qid, results in ranked.items()}
     n = len(cases) or 1
+    per_query_recall: dict[int, list[float]] = {k: [] for k in ks}
+    per_query_mrr: list[float] = []
+    per_query_ndcg: list[float] = []
+    per_query_hit: list[float] = []
+    for case in cases:
+        ids = ranked_ids[case.qid]
+        rel = set(case.relevant_ids)
+        for k in ks:
+            per_query_recall[k].append(recall_at_k(ids, rel, k))
+        per_query_mrr.append(mrr(ids, rel))
+        per_query_ndcg.append(ndcg_at_k(ids, rel, 10))
+        per_query_hit.append(1.0 if rel & set(ids[:top_k]) else 0.0)
+
     metrics = PipelineMetrics(name=name, ks=tuple(ks))
     for k in ks:
-        metrics.recall[k] = sum(recall_at_k(ranked_ids[c.qid], c.relevant_ids, k) for c in cases) / n
-    metrics.mrr = sum(mrr(ranked_ids[c.qid], c.relevant_ids) for c in cases) / n
-    metrics.ndcg = sum(ndcg_at_k(ranked_ids[c.qid], c.relevant_ids, 10) for c in cases) / n
-    metrics.hit_rate = sum(
-        1 for c in cases if set(ranked_ids[c.qid][:top_k]) & set(c.relevant_ids)
-    ) / n
+        metrics.recall[k] = sum(per_query_recall[k]) / n
+    metrics.mrr = sum(per_query_mrr) / n
+    metrics.ndcg = sum(per_query_ndcg) / n
+    metrics.hit_rate = sum(per_query_hit) / n
+    if cases and n_boot > 0:
+        metrics.recall_ci = {
+            k: bootstrap_ci(per_query_recall[k], n_boot=n_boot, confidence=confidence, seed=seed)
+            for k in ks
+        }
+        metrics.mrr_ci = bootstrap_ci(per_query_mrr, n_boot=n_boot, confidence=confidence, seed=seed)
+        metrics.ndcg_ci = bootstrap_ci(per_query_ndcg, n_boot=n_boot, confidence=confidence, seed=seed)
+        metrics.hit_rate_ci = bootstrap_ci(per_query_hit, n_boot=n_boot, confidence=confidence, seed=seed)
     metrics.latency = latency_stats(durations_ms)
     return metrics
 
@@ -62,10 +91,27 @@ def run_retrieval(
     *,
     top_k: int = 10,
     ks: tuple[int, ...] = (1, 3, 5, 10),
+    seed: int = 42,
+    n_boot: int = 1000,
+    confidence: float = 0.95,
 ) -> PipelineMetrics:
-    """在评测集上运行一条检索管线，返回聚合指标与真实计时延迟。"""
+    """在评测集上运行一条检索管线，返回聚合指标（含 bootstrap 置信区间）与真实计时延迟。
+
+    - seed/n_boot/confidence 控制 bootstrap 重采样；n_boot=0 关闭置信区间；
+    - 固定 seed 保证区间可复现。
+    """
     ranked, durations_ms = _collect_rankings(cases, retriever, top_k)
-    return _build_metrics(retriever.name, cases, ranked, durations_ms, top_k=top_k, ks=ks)
+    return _build_metrics(
+        retriever.name,
+        cases,
+        ranked,
+        durations_ms,
+        top_k=top_k,
+        ks=ks,
+        seed=seed,
+        n_boot=n_boot,
+        confidence=confidence,
+    )
 
 
 def run_evaluation(
@@ -76,12 +122,17 @@ def run_evaluation(
     ks: tuple[int, ...] = (1, 3, 5, 10),
     judge: JudgeProvider | None = None,
     answers: dict[str, str] | None = None,
+    seed: int = 42,
+    n_boot: int = 1000,
+    confidence: float = 0.95,
 ) -> ReportData:
     """多路检索管线对比评测，产出报告数据。
 
     - retrievers：管线名 → 检索器，第一个视为主管线（badcase 示例取自主管线）；
     - judge + answers：可选。answers[qid] 是待评系统答案，
-      与用例自带的参考答案一起交给裁判评分；裁判不可用时整段优雅跳过。
+      与用例自带的参考答案一起交给裁判评分；裁判不可用时整段优雅跳过；
+    - seed/n_boot/confidence 控制 bootstrap 置信区间，n_boot=0 关闭；
+      所有管线共用同一 seed 与评测集规模，重采样索引一致，区间可直接横向对比。
     - 每条查询对每个检索器只检索一次，指标/归因/judge 上下文共用同一批结果。
     """
     if not retrievers:
@@ -93,7 +144,19 @@ def run_evaluation(
     for name, retriever in retrievers.items():
         ranked, durations_ms = _collect_rankings(cases, retriever, top_k)
         rankings[name] = ranked
-        pipelines.append(_build_metrics(name, cases, ranked, durations_ms, top_k=top_k, ks=ks))
+        pipelines.append(
+            _build_metrics(
+                name,
+                cases,
+                ranked,
+                durations_ms,
+                top_k=top_k,
+                ks=ks,
+                seed=seed,
+                n_boot=n_boot,
+                confidence=confidence,
+            )
+        )
 
     attribution: dict[str, dict[str, int]] = {}
     badcases_by_pipeline: dict[str, list[Badcase]] = {}

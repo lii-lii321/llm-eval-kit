@@ -22,8 +22,10 @@ from .judge import (
     judge_summary,
 )
 from .metrics import (
+    ConfidenceInterval,
     LatencyStats,
     PipelineMetrics,
+    bootstrap_ci,
     latency_stats,
     mrr,
     ndcg_at_k,
@@ -42,6 +44,7 @@ __all__ = [
     "Badcase",
     "BaseRetriever",
     "BM25Retriever",
+    "ConfidenceInterval",
     "DIMENSIONS",
     "DIMENSIONS_ZH",
     "Doc",
@@ -64,6 +67,7 @@ __all__ = [
     "TFRetriever",
     "__version__",
     "attribute_badcases",
+    "bootstrap_ci",
     "extract_phrases",
     "generate_eval_set",
     "judge_summary",

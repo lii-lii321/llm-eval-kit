@@ -9,7 +9,7 @@
 ## 功能特性
 
 - **合成评测集生成**：从纯文本文档/题库构造 query-doc-answer 三元组。规则式生成器（词频 × 逆文档频率选关键词 + 查询模板），不依赖真实 LLM，固定 seed 完全可复现；支持同义改写构造词面不匹配的困难样本
-- **检索指标**：Recall@K、MRR、NDCG@10（二元相关度）、命中率与 P50/P95 延迟，支持多路检索管线同台对比
+- **检索指标**：Recall@K、MRR、NDCG@10（二元相关度）、命中率与 P50/P95 延迟，聚合指标附 bootstrap 95% 置信区间（固定 seed 完全可复现），支持多路检索管线同台对比
 - **LLM-as-judge 四维评分**：正确性 / 相关性 / 可操作性 / 清晰度（1-5 分）。provider 可插拔——内置确定性 `MockJudge`（离线可跑、测试用）；`OpenAICompatibleJudge` 读环境变量，未配置 key 时优雅跳过
 - **badcase 归因**：对 top-K 未命中查询分类——关键词不匹配 / 语义漂移 / 语料缺失，附可解释 detail
 - **报告输出**：Markdown + HTML 各一份，含指标表格、归因表、评分表与未命中示例
@@ -88,13 +88,14 @@ md_path, html_path = write_reports(data, Path("reports"))
 
 ## demo 实测指标
 
-以下数字由 `python -m llm_eval_kit.cli demo`（seed=42）真实跑出，完整解读见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)：
+以下数字由 `python -m llm_eval_kit.cli demo`（seed=42）真实跑出，完整解读见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)。
+方括号内为 bootstrap 95% 置信区间（百分位法，重采样 1000 次）：
 
 | 管线 | Recall@1 | Recall@10 | MRR | NDCG@10 | P50(ms) |
 |---|---|---|---|---|---|
-| bm25 | 0.9167 | 0.9583 | 0.9375 | 0.9430 | 0.02 |
-| tf | 0.9167 | 0.9583 | 0.9375 | 0.9430 | 0.03 |
-| hybrid | 0.9167 | 0.9583 | 0.9375 | 0.9430 | 0.06 |
+| bm25 | 0.9167 [0.7917, 1.0000] | 0.9583 [0.8750, 1.0000] | 0.9375 [0.8333, 1.0000] | 0.9430 [0.8442, 1.0000] | 0.02 |
+| tf | 0.9167 [0.7917, 1.0000] | 0.9583 [0.8750, 1.0000] | 0.9375 [0.8333, 1.0000] | 0.9430 [0.8442, 1.0000] | 0.03 |
+| hybrid | 0.9167 [0.7917, 1.0000] | 0.9583 [0.8750, 1.0000] | 0.9375 [0.8333, 1.0000] | 0.9430 [0.8442, 1.0000] | 0.06 |
 
 badcase 归因：关键词不匹配 1 条（改写样本「什么是梦话？」——原主题词「幻觉」被换成零词面重叠的表达，纯词面检索的教科书式失败）；MockJudge 四维均分：正确性 4.83 / 相关性 5.00 / 可操作性 1.30 / 清晰度 4.43。
 
@@ -106,14 +107,14 @@ src/llm_eval_kit/
 ├── corpus.py        # Doc 数据结构、纯文本文档加载与切块
 ├── synth.py         # 规则式合成评测集生成器
 ├── retrieval.py     # BM25 / 词频 / 混合检索器
-├── metrics.py       # Recall@K / MRR / NDCG@10 / 延迟分位数
+├── metrics.py       # Recall@K / MRR / NDCG@10 / bootstrap 置信区间 / 延迟分位数
 ├── judge.py         # LLM-as-judge（MockJudge + OpenAICompatibleJudge）
 ├── attribution.py   # badcase 三类归因
 ├── report.py        # Markdown + HTML 报告渲染
 ├── pipeline.py      # 端到端评测管线（多管线对比）
 ├── demo.py          # 玩具语料与 demo 编排
 └── cli.py           # 命令行入口
-tests/               # 145 个离线测试，零网络依赖
+tests/               # 182 个离线测试，零网络依赖
 docs/PERFORMANCE.md  # demo 实测性能报告
 ```
 
@@ -123,6 +124,7 @@ docs/PERFORMANCE.md  # demo 实测性能报告
 - **中文分词是字符二元组近似**：不是真正的中文分词，跨词二元组（如「索评」）会引入噪声；对检索效果敏感的场景建议接 jieba 或真实向量检索
 - **检索器是单机玩具实现**：BM25/TF 为纯 Python 教学实现，适合几百块以内的语料，未做性能优化；得分为 0（零词面重叠）的文档不返回结果
 - **NDCG 使用二元相关度**：不支持分级相关度标注（graded relevance）
+- **bootstrap 置信区间在极小评测集上不可靠**：非参数百分位 bootstrap 在样本数很小（如 n<10）时覆盖率不足、区间偏窄，n=1 时退化为点估计；demo 规模（24 条）下的区间仅作不确定性参考，不构成统计学推断
 - **OpenAICompatibleJudge 的真实服务验证范围**：已于 2026-10-02 对阿里云 DashScope（qwen-turbo，OpenAI 兼容模式）完成真实端到端调用，四维评分与 rationale 解析正确（见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)）；HTTP 层另有本地真实 socket 集成测试（`tests/test_judge_real_http.py`）。OpenAI 官方端点与其他 provider 未实测；仓库测试套件保持全离线，真实冒烟测试默认跳过（设 `EVAL_REAL_LLM_SMOKE=1` 与端点环境变量后可复验）
 - **SSRF 防护只覆盖 URL 字面量**：域名解析后的 IP 不做二次校验（DNS rebinding 不在防护范围）
 - **MockJudge 是词面启发式**：分数分布不代表真实模型裁判，仅用于离线联调与回归

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .attribution import REASON_LABELS_ZH, Badcase
 from .judge import DIMENSIONS, DIMENSIONS_ZH, JudgeSummary
-from .metrics import PipelineMetrics
+from .metrics import ConfidenceInterval, PipelineMetrics
 
 
 @dataclass
@@ -43,6 +43,22 @@ def _fmt_ms(value: float) -> str:
     return f"{value:.2f}"
 
 
+def _fmt_metric(value: float, ci: ConfidenceInterval | None) -> str:
+    """渲染指标单元格：有点信区间时附上方括号区间。"""
+    if ci is None:
+        return _fmt(value)
+    return f"{_fmt(value)} [{_fmt(ci.low)}, {_fmt(ci.high)}]"
+
+
+def _ci_legend(data: ReportData) -> ConfidenceInterval | None:
+    """取报告里第一个出现的置信区间，用于渲染图例；没有则返回 None。"""
+    for p in data.pipelines:
+        for ci in (p.mrr_ci, p.ndcg_ci, p.hit_rate_ci, *p.recall_ci.values()):
+            if ci is not None:
+                return ci
+    return None
+
+
 def render_markdown(data: ReportData) -> str:
     """渲染 Markdown 报告。"""
     lines: list[str] = ["# LLM/RAG 评测报告", ""]
@@ -60,9 +76,23 @@ def render_markdown(data: ReportData) -> str:
         lines.append(header)
         lines.append("|" + "---|" * (len(ks) + 6))
         for p in data.pipelines:
-            cells = [p.name] + [_fmt(p.recall.get(k, 0.0)) for k in ks]
-            cells += [_fmt(p.mrr), _fmt(p.ndcg), _fmt(p.hit_rate), _fmt_ms(p.latency.p50), _fmt_ms(p.latency.p95)]
+            cells = [p.name] + [
+                _fmt_metric(p.recall.get(k, 0.0), p.recall_ci.get(k)) for k in ks
+            ]
+            cells += [
+                _fmt_metric(p.mrr, p.mrr_ci),
+                _fmt_metric(p.ndcg, p.ndcg_ci),
+                _fmt_metric(p.hit_rate, p.hit_rate_ci),
+                _fmt_ms(p.latency.p50),
+                _fmt_ms(p.latency.p95),
+            ]
             lines.append("| " + " | ".join(cells) + " |")
+        ci = _ci_legend(data)
+        if ci is not None:
+            lines.append("")
+            lines.append(
+                f"> 方括号内为 bootstrap 置信区间（百分位法，置信水平 {ci.level:.0%}，重采样 {ci.n_boot} 次）。"
+            )
         lines.append("")
 
     lines.append("## badcase 归因")
@@ -155,10 +185,25 @@ def render_html(data: ReportData) -> str:
         headers = ["管线"] + [f"Recall@{k}" for k in ks] + ["MRR", "NDCG@10", "命中率", "P50(ms)", "P95(ms)"]
         rows = []
         for p in data.pipelines:
-            cells = [p.name] + [_fmt(p.recall.get(k, 0.0)) for k in ks]
-            cells += [_fmt(p.mrr), _fmt(p.ndcg), _fmt(p.hit_rate), _fmt_ms(p.latency.p50), _fmt_ms(p.latency.p95)]
+            cells = [p.name] + [
+                _fmt_metric(p.recall.get(k, 0.0), p.recall_ci.get(k)) for k in ks
+            ]
+            cells += [
+                _fmt_metric(p.mrr, p.mrr_ci),
+                _fmt_metric(p.ndcg, p.ndcg_ci),
+                _fmt_metric(p.hit_rate, p.hit_rate_ci),
+                _fmt_ms(p.latency.p50),
+                _fmt_ms(p.latency.p95),
+            ]
             rows.append(cells)
-        sections.append("<h2>检索指标</h2>" + _html_table(headers, rows))
+        table = _html_table(headers, rows)
+        ci = _ci_legend(data)
+        if ci is not None:
+            table += (
+                f'<p class="note">方括号内为 bootstrap 置信区间'
+                f"（百分位法，置信水平 {ci.level:.0%}，重采样 {ci.n_boot} 次）。</p>"
+            )
+        sections.append("<h2>检索指标</h2>" + table)
 
     if data.attribution:
         headers = ["管线", "关键词不匹配", "语义漂移", "语料缺失", "未命中合计"]

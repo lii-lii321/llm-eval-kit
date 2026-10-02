@@ -2,7 +2,15 @@ import math
 
 import pytest
 
-from llm_eval_kit.metrics import latency_stats, mrr, ndcg_at_k, percentile, recall_at_k
+from llm_eval_kit.metrics import (
+    ConfidenceInterval,
+    bootstrap_ci,
+    latency_stats,
+    mrr,
+    ndcg_at_k,
+    percentile,
+    recall_at_k,
+)
 
 
 class TestRecallAtK:
@@ -91,6 +99,55 @@ class TestPercentile:
     def test_invalid_p_raises(self):
         with pytest.raises(ValueError):
             percentile([1], 101)
+
+
+class TestBootstrapCI:
+    SPREAD = [0.1, 0.9, 0.5, 0.3, 0.7, 0.2, 0.8, 0.4, 0.6, 0.35]
+
+    def test_constant_values_degenerate_interval(self):
+        ci = bootstrap_ci([0.5] * 10)
+        assert ci.low == pytest.approx(0.5)
+        assert ci.high == pytest.approx(0.5)
+        assert ci.level == 0.95
+        assert ci.n_boot == 1000
+
+    def test_interval_within_sample_range(self):
+        ci = bootstrap_ci(self.SPREAD, seed=1)
+        assert 0.1 <= ci.low <= ci.high <= 0.9
+
+    def test_same_seed_reproducible(self):
+        assert bootstrap_ci(self.SPREAD, seed=7) == bootstrap_ci(self.SPREAD, seed=7)
+
+    def test_variable_data_wider_than_constant(self):
+        variable = bootstrap_ci([0.0, 1.0] * 10, seed=3)
+        constant = bootstrap_ci([0.5] * 20, seed=3)
+        assert (variable.high - variable.low) > (constant.high - constant.low)
+
+    def test_custom_n_boot_and_level_recorded(self):
+        ci = bootstrap_ci([0.2, 0.8], n_boot=50, confidence=0.9, seed=11)
+        assert ci.n_boot == 50
+        assert ci.level == 0.9
+        assert isinstance(ci, ConfidenceInterval)
+
+    def test_interval_brackets_sample_mean(self):
+        values = [0.2] * 30 + [0.8] * 30
+        ci = bootstrap_ci(values, seed=5)
+        mean = sum(values) / len(values)
+        assert ci.low <= mean <= ci.high
+
+    def test_empty_values_raises(self):
+        with pytest.raises(ValueError):
+            bootstrap_ci([])
+
+    def test_non_positive_n_boot_raises(self):
+        with pytest.raises(ValueError):
+            bootstrap_ci([1.0], n_boot=0)
+
+    def test_confidence_out_of_range_raises(self):
+        with pytest.raises(ValueError):
+            bootstrap_ci([1.0], confidence=1.0)
+        with pytest.raises(ValueError):
+            bootstrap_ci([1.0], confidence=0.0)
 
 
 class TestLatencyStats:
