@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 import llm_eval_kit.judge as judge_module
@@ -176,6 +178,38 @@ class TestOpenAICompatibleJudgeBehavior:
         result = judge.score(query="q", answer="a")
         assert result.scores["correctness"] == 4
 
+    def test_json_with_leading_text_extracted(self, monkeypatch):
+        """真实小模型常在 JSON 前后加说明文字，应能提取出 JSON 对象。"""
+        judge = OpenAICompatibleJudge(base_url="https://api.example.com/v1", api_key="k", model="m")
+        content = (
+            '好的，评分如下：{"correctness": 3, "relevance": 4, "actionability": 2, "clarity": 5} '
+            "希望对您有帮助。"
+        )
+        monkeypatch.setattr(
+            judge_module, "_http_post_json", lambda *a, **kw: {"choices": [{"message": {"content": content}}]}
+        )
+        result = judge.score(query="q", answer="a")
+        assert result.scores == {"correctness": 3, "relevance": 4, "actionability": 2, "clarity": 5}
+
+    def test_json_with_nested_braces_extracted(self, monkeypatch):
+        judge = OpenAICompatibleJudge(base_url="https://api.example.com/v1", api_key="k", model="m")
+        content = '结论 {"correctness": 5, "relevance": 5, "actionability": 5, "clarity": 5, "note": "含 } 花括号"}'
+        monkeypatch.setattr(
+            judge_module, "_http_post_json", lambda *a, **kw: {"choices": [{"message": {"content": content}}]}
+        )
+        result = judge.score(query="q", answer="a")
+        assert result.scores["clarity"] == 5
+
+    def test_text_without_any_json_raises(self, monkeypatch):
+        judge = OpenAICompatibleJudge(base_url="https://api.example.com/v1", api_key="k", model="m")
+        monkeypatch.setattr(
+            judge_module,
+            "_http_post_json",
+            lambda *a, **kw: {"choices": [{"message": {"content": "抱歉，我无法完成评分"}}]},
+        )
+        with pytest.raises(LLMJudgeError, match="不是合法 JSON"):
+            judge.score(query="q", answer="a")
+
 
 class TestNetworkRobustness:
     """网络与响应异常必须包装成 LLMJudgeError，保证管线可优雅跳过。"""
@@ -248,6 +282,31 @@ class TestNetworkRobustness:
         assert data.judge.skipped
         assert data.judge.skip_reason
         assert data.eval_size == 2  # 检索评测本身不受影响
+
+
+class TestRealProviderSmoke:
+    """真实 LLM 服务冒烟测试：默认跳过，显式设置 EVAL_REAL_LLM_SMOKE=1 才运行。
+
+    运行条件（会产生真实网络请求与少量费用，不进常规离线套件）：
+        EVAL_REAL_LLM_SMOKE=1
+        EVAL_LLM_API_KEY=<真实 key>          # 只从环境变量读取，绝不入库
+        EVAL_LLM_BASE_URL=<OpenAI 兼容地址>   # 例如阿里云 DashScope compatible-mode
+        EVAL_LLM_MODEL=<模型名>
+    """
+
+    @pytest.mark.skipif(
+        os.environ.get("EVAL_REAL_LLM_SMOKE", "") != "1" or not os.environ.get("EVAL_LLM_API_KEY"),
+        reason="仅当 EVAL_REAL_LLM_SMOKE=1 且提供真实端点环境变量时运行（会产生真实网络请求）",
+    )
+    def test_real_provider_scores_within_range(self):
+        judge = OpenAICompatibleJudge.from_env()
+        result = judge.score(
+            query="什么是召回率（Recall@K）？",
+            answer="召回率衡量前 K 条检索结果覆盖了多少相关文档，等于命中数除以相关文档总数。",
+            reference="Recall@K 等于前 K 条结果中命中的相关文档数除以相关文档总数。",
+        )
+        for dim in DIMENSIONS:
+            assert 1 <= result.scores[dim] <= 5
 
 
 class TestParseAndSummary:

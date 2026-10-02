@@ -56,6 +56,20 @@ python -m llm_eval_kit.cli demo --out reports
   MockJudge 的词面规则正确地识别出了「答案不可操作」；
 - 样本数 23 而非 24：唯一未命中的查询检索结果为空，抽取应答器返回空串，该条不参与评分。
 
+## 真实 LLM 裁判验证（2026-10-02）
+
+`OpenAICompatibleJudge` 的真实服务路径已做一次性端到端验证（key 只从环境变量读取，未入库、未出现在任何输出）：
+
+- 端点：阿里云 DashScope OpenAI 兼容模式（`compatible-mode/v1`），模型 `qwen-turbo`
+- 输入：demo 风格评测三元组——query「什么是召回率（Recall@K）？」+ 待评答案 + 参考答案
+- 真实模型返回四维评分：`correctness=5, relevance=5, actionability=1, clarity=5`
+- 真实 rationale：「待评答案准确解释了召回率@K的定义，与参考答案一致，紧扣用户问题，表达清晰，但未提供可操作的步骤。」
+- 交叉验证：真实裁判与 demo 中 MockJudge 对「不可操作」类答案的判断方向一致（真实 1 分 vs mock 均值 1.30）
+
+错误路径同日在真实网络下验证：指向无效/未授权端点的调用分别返回 HTTP 307/404/401，均被包装为 `LLMJudgeError` 而非裸异常，与管线的优雅跳过承诺一致。
+
+HTTP 层由本地真实 socket 集成测试覆盖（`tests/test_judge_real_http.py`：127.0.0.1 服务器 + 完整 urlopen 链路）。仓库测试套件保持全离线；真实冒烟测试默认跳过，设 `EVAL_REAL_LLM_SMOKE=1` 与 `EVAL_LLM_*` 端点环境变量后可随时复验。
+
 ## 规模说明
 
 - 本报告仅代表 24 段玩具语料、24 条查询的 demo 规模，不构成对真实业务语料的性能结论；

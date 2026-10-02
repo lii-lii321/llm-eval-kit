@@ -123,7 +123,7 @@ docs/PERFORMANCE.md  # demo 实测性能报告
 - **中文分词是字符二元组近似**：不是真正的中文分词，跨词二元组（如「索评」）会引入噪声；对检索效果敏感的场景建议接 jieba 或真实向量检索
 - **检索器是单机玩具实现**：BM25/TF 为纯 Python 教学实现，适合几百块以内的语料，未做性能优化；得分为 0（零词面重叠）的文档不返回结果
 - **NDCG 使用二元相关度**：不支持分级相关度标注（graded relevance）
-- **OpenAICompatibleJudge 网络路径未对真实服务端到端验证**：请求构造与响应解析由 mock 测试覆盖，但本仓库开发环境无法访问外网 LLM 服务，真实调用路径未经实测
+- **OpenAICompatibleJudge 的真实服务验证范围**：已于 2026-10-02 对阿里云 DashScope（qwen-turbo，OpenAI 兼容模式）完成真实端到端调用，四维评分与 rationale 解析正确（见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)）；HTTP 层另有本地真实 socket 集成测试（`tests/test_judge_real_http.py`）。OpenAI 官方端点与其他 provider 未实测；仓库测试套件保持全离线，真实冒烟测试默认跳过（设 `EVAL_REAL_LLM_SMOKE=1` 与端点环境变量后可复验）
 - **SSRF 防护只覆盖 URL 字面量**：域名解析后的 IP 不做二次校验（DNS rebinding 不在防护范围）
 - **MockJudge 是词面启发式**：分数分布不代表真实模型裁判，仅用于离线联调与回归
 - **demo 数字仅代表玩具规模**：24 段语料、24 条查询，不构成对真实业务语料的性能结论

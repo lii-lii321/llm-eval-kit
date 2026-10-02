@@ -209,14 +209,54 @@ def _http_post_json(url: str, payload: dict, *, api_key: str, timeout: float) ->
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\n?|\n?```$")
 
 
+def _extract_json_object(text: str) -> dict | None:
+    """从混有说明文字的输出中提取第一个平衡的 JSON 对象；找不到返回 None。
+
+    真实小模型常无视“只输出 JSON”的指令，在 JSON 前后加说明文字，
+    该回退让 provider 对这类输出保持健壮。
+    """
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_string = False
+        escaped = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        parsed = json.loads(text[start : i + 1])
+                    except json.JSONDecodeError:
+                        break
+                    return parsed if isinstance(parsed, dict) else None
+        start = text.find("{", start + 1)
+    return None
+
+
 def _parse_judge_content(content: str, *, provider: str) -> JudgeScore:
     text = content.strip()
     if text.startswith("```"):
         text = _FENCE_RE.sub("", text).strip()
     try:
         raw = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise LLMJudgeError(f"裁判输出不是合法 JSON：{content[:200]!r}") from exc
+    except json.JSONDecodeError:
+        extracted = _extract_json_object(text)
+        if extracted is None:
+            raise LLMJudgeError(f"裁判输出不是合法 JSON：{content[:200]!r}") from None
+        raw = extracted
     if not isinstance(raw, dict):
         raise LLMJudgeError(f"裁判输出应为 JSON 对象，收到：{type(raw).__name__}")
     scores: dict[str, int] = {}
