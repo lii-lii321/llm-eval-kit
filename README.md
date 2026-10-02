@@ -1,0 +1,133 @@
+# llm-eval-kit
+
+![CI](https://github.com/lii-lii321/llm-eval-kit/actions/workflows/ci.yml/badge.svg)
+
+离线可跑的 RAG 检索与 LLM 应用评测工具库：从纯文本文档合成评测集，对比多路检索管线，
+用 LLM-as-judge 给答案做四维评分，把未命中查询归因成三类原因，最后产出 Markdown + HTML 双报告。
+核心零第三方依赖，全部功能离线可复现，适合作为 RAG/LLM 系统的评测基座或教学参考。
+
+## 功能特性
+
+- **合成评测集生成**：从纯文本文档/题库构造 query-doc-answer 三元组。规则式生成器（词频 × 逆文档频率选关键词 + 查询模板），不依赖真实 LLM，固定 seed 完全可复现；支持同义改写构造词面不匹配的困难样本
+- **检索指标**：Recall@K、MRR、NDCG@10（二元相关度）、命中率与 P50/P95 延迟，支持多路检索管线同台对比
+- **LLM-as-judge 四维评分**：正确性 / 相关性 / 可操作性 / 清晰度（1-5 分）。provider 可插拔——内置确定性 `MockJudge`（离线可跑、测试用）；`OpenAICompatibleJudge` 读环境变量，未配置 key 时优雅跳过
+- **badcase 归因**：对 top-K 未命中查询分类——关键词不匹配 / 语义漂移 / 语料缺失，附可解释 detail
+- **报告输出**：Markdown + HTML 各一份，含指标表格、归因表、评分表与未命中示例
+- **端到端 demo**：内置 24 段玩具语料 + 玩具 BM25/词频/混合检索器，一条命令跑通全链路
+
+## 架构
+
+```mermaid
+flowchart LR
+    A["纯文本文档 / 题库"] --> B["语料加载 corpus"]
+    B --> C["合成评测集生成 synth<br/>query-doc-answer 三元组"]
+    C --> D["评测管线 pipeline"]
+    subgraph R["检索管线（可插拔）"]
+        E1["BM25"]
+        E2["词频 TF"]
+        E3["混合 Hybrid"]
+    end
+    D --> R
+    E1 --> F["检索指标 metrics<br/>Recall@K / MRR / NDCG@10 / 延迟"]
+    E2 --> F
+    E3 --> F
+    D --> G["LLM-as-judge judge<br/>mock / openai_compatible"]
+    D --> H["badcase 归因 attribution<br/>关键词不匹配 / 语义漂移 / 语料缺失"]
+    F --> I["报告 report<br/>Markdown + HTML"]
+    G --> I
+    H --> I
+```
+
+## 快速开始
+
+```bash
+pip install -e .[dev]
+
+# 一条命令跑通端到端 demo（合成评测集 → 三管线对比 → mock 评分 → 归因 → 报告）
+python -m llm_eval_kit.cli demo --out reports
+# 安装后也可用：llm-eval-kit demo --out reports
+```
+
+作为库使用：
+
+```python
+from pathlib import Path
+
+from llm_eval_kit import (
+    BM25Retriever, HybridRetriever, MockJudge,
+    generate_eval_set, load_corpus_from_dir, run_evaluation, write_reports,
+)
+
+docs = load_corpus_from_dir("path/to/txt_docs")          # 任意 .txt/.md 目录
+cases = generate_eval_set(docs, num_cases=50, seed=42)   # 规则合成评测集
+
+data = run_evaluation(
+    cases,
+    {"bm25": BM25Retriever(docs), "hybrid": HybridRetriever(docs, alpha=0.6)},
+    top_k=10,
+    judge=MockJudge(),                                    # 未配置真实 LLM key 时的离线裁判
+)
+md_path, html_path = write_reports(data, Path("reports"))
+```
+
+真实 demo 实测数字见下方[「demo 实测指标」](#demo-实测指标)与 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)。
+
+## LLM-as-judge provider 配置
+
+`OpenAICompatibleJudge` 全部通过环境变量配置（见 `.env.example`，均为占位符）：
+
+| 环境变量 | 说明 | 默认值 |
+|---|---|---|
+| `EVAL_LLM_API_KEY` | API key；未设置时评分优雅跳过 | （空，跳过） |
+| `EVAL_LLM_BASE_URL` | OpenAI 兼容服务地址 | `https://api.openai.com/v1` |
+| `EVAL_LLM_MODEL` | 模型名 | `gpt-4o-mini` |
+| `EVAL_LLM_TIMEOUT` | 请求超时秒数 | `30` |
+| `EVAL_LLM_ALLOW_LOCAL` | 置 `1` 放行 localhost/内网地址（自建 Ollama 等服务用） | `0` |
+
+安全默认：仅允许 http/https，默认拒绝 localhost、回环、私有与保留地址，凭据只从环境变量读取。
+
+## demo 实测指标
+
+以下数字由 `python -m llm_eval_kit.cli demo`（seed=42）真实跑出，完整解读见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)：
+
+| 管线 | Recall@1 | Recall@10 | MRR | NDCG@10 | P50(ms) |
+|---|---|---|---|---|---|
+| bm25 | 0.9167 | 0.9583 | 0.9375 | 0.9430 | 0.02 |
+| tf | 0.9167 | 0.9583 | 0.9375 | 0.9430 | 0.03 |
+| hybrid | 0.9167 | 0.9583 | 0.9375 | 0.9430 | 0.06 |
+
+badcase 归因：关键词不匹配 1 条（改写样本「什么是梦话？」——原主题词「幻觉」被换成零词面重叠的表达，纯词面检索的教科书式失败）；MockJudge 四维均分：正确性 4.83 / 相关性 5.00 / 可操作性 1.30 / 清晰度 4.43。
+
+## 项目结构
+
+```
+src/llm_eval_kit/
+├── tokenize.py      # 中英混合分词（ASCII 词元 + CJK 字符二元组）
+├── corpus.py        # Doc 数据结构、纯文本文档加载与切块
+├── synth.py         # 规则式合成评测集生成器
+├── retrieval.py     # BM25 / 词频 / 混合检索器
+├── metrics.py       # Recall@K / MRR / NDCG@10 / 延迟分位数
+├── judge.py         # LLM-as-judge（MockJudge + OpenAICompatibleJudge）
+├── attribution.py   # badcase 三类归因
+├── report.py        # Markdown + HTML 报告渲染
+├── pipeline.py      # 端到端评测管线（多管线对比）
+├── demo.py          # 玩具语料与 demo 编排
+└── cli.py           # 命令行入口
+tests/               # 145 个离线测试，零网络依赖
+docs/PERFORMANCE.md  # demo 实测性能报告
+```
+
+## 已知限制
+
+- **合成查询偏词面化**：规则生成器基于词面统计，无语义理解；长中文串按虚词切分 + 截断到 6 字，可能产出「常见维度有正」这类不自然查询。生产建议用 LLM 合成或真实查询日志
+- **中文分词是字符二元组近似**：不是真正的中文分词，跨词二元组（如「索评」）会引入噪声；对检索效果敏感的场景建议接 jieba 或真实向量检索
+- **检索器是单机玩具实现**：BM25/TF 为纯 Python 教学实现，适合几百块以内的语料，未做性能优化；得分为 0（零词面重叠）的文档不返回结果
+- **NDCG 使用二元相关度**：不支持分级相关度标注（graded relevance）
+- **OpenAICompatibleJudge 网络路径未对真实服务端到端验证**：请求构造与响应解析由 mock 测试覆盖，但本仓库开发环境无法访问外网 LLM 服务，真实调用路径未经实测
+- **SSRF 防护只覆盖 URL 字面量**：域名解析后的 IP 不做二次校验（DNS rebinding 不在防护范围）
+- **MockJudge 是词面启发式**：分数分布不代表真实模型裁判，仅用于离线联调与回归
+- **demo 数字仅代表玩具规模**：24 段语料、24 条查询，不构成对真实业务语料的性能结论
+
+## License
+
+[MIT](LICENSE)
