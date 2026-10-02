@@ -4,6 +4,7 @@ import pytest
 
 from llm_eval_kit.metrics import (
     ConfidenceInterval,
+    average_precision,
     bootstrap_ci,
     latency_stats,
     mrr,
@@ -99,6 +100,43 @@ class TestPercentile:
     def test_invalid_p_raises(self):
         with pytest.raises(ValueError):
             percentile([1], 101)
+
+
+class TestAveragePrecision:
+    def test_perfect_ordering(self):
+        assert average_precision(["a", "b", "x"], {"a", "b"}, 10) == pytest.approx(1.0)
+
+    def test_order_penalty(self):
+        good = average_precision(["a", "x", "b"], {"a", "b"}, 10)
+        bad = average_precision(["x", "a", "b"], {"a", "b"}, 10)
+        assert good == pytest.approx(5 / 6)
+        assert bad == pytest.approx(7 / 12)
+        assert good > bad
+
+    def test_single_relevant_at_third_position(self):
+        assert average_precision(["x", "y", "a"], {"a"}, 10) == pytest.approx(1 / 3)
+
+    def test_all_relevant_found_sum_over_total(self):
+        value = average_precision(["a", "x", "b", "c"], {"a", "b", "c"}, 10)
+        assert value == pytest.approx((1 + 2 / 3 + 3 / 4) / 3)
+
+    def test_no_hit(self):
+        assert average_precision(["x", "y"], {"a"}, 10) == 0.0
+
+    def test_empty_relevant_is_zero(self):
+        assert average_precision(["a"], set(), 10) == 0.0
+
+    def test_k_cuts_off_results(self):
+        # 「a」在 K 之外被截断，「b」不在结果里，top-1 未命中
+        assert average_precision(["x", "a"], {"a", "b"}, 1) == 0.0
+
+    def test_k_smaller_than_relevant_count_normalizes_by_k(self):
+        # top-1 命中即满分：归一分母是 min(相关文档数, K)，与 ndcg_at_k 口径一致
+        assert average_precision(["a"], {"a", "z"}, 1) == pytest.approx(1.0)
+
+    def test_invalid_k_raises(self):
+        with pytest.raises(ValueError):
+            average_precision(["a"], {"a"}, 0)
 
 
 class TestBootstrapCI:

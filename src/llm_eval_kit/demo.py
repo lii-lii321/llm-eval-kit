@@ -141,6 +141,7 @@ def print_summary(data: ReportData) -> None:
         "管线".ljust(8)
         + "".join(f"Recall@{k}".ljust(12) for k in ks)
         + "MRR".ljust(8)
+        + "MAP@10".ljust(8)
         + "NDCG@10".ljust(10)
         + "P50(ms)".ljust(10)
     )
@@ -148,7 +149,7 @@ def print_summary(data: ReportData) -> None:
     for metrics in data.pipelines:
         row = metrics.name.ljust(8)
         row += "".join(f"{metrics.recall.get(k, 0.0):<12.4f}" for k in ks)
-        row += f"{metrics.mrr:<8.4f}{metrics.ndcg:<10.4f}{metrics.latency.p50:<10.3f}"
+        row += f"{metrics.mrr:<8.4f}{metrics.map:<8.4f}{metrics.ndcg:<10.4f}{metrics.latency.p50:<10.3f}"
         print(row)
     if data.attribution:
         primary_name = next(iter(data.attribution))

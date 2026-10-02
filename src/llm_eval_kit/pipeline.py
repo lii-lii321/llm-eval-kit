@@ -9,6 +9,7 @@ from .attribution import Badcase, attribute_badcases, summarize_attribution
 from .judge import JudgeProvider, JudgeScore, JudgeSummary, LLMJudgeError, judge_summary
 from .metrics import (
     PipelineMetrics,
+    average_precision,
     bootstrap_ci,
     latency_stats,
     mrr,
@@ -56,6 +57,7 @@ def _build_metrics(
     n = len(cases) or 1
     per_query_recall: dict[int, list[float]] = {k: [] for k in ks}
     per_query_mrr: list[float] = []
+    per_query_map: list[float] = []
     per_query_ndcg: list[float] = []
     per_query_hit: list[float] = []
     for case in cases:
@@ -64,6 +66,7 @@ def _build_metrics(
         for k in ks:
             per_query_recall[k].append(recall_at_k(ids, rel, k))
         per_query_mrr.append(mrr(ids, rel))
+        per_query_map.append(average_precision(ids, rel, 10))
         per_query_ndcg.append(ndcg_at_k(ids, rel, 10))
         per_query_hit.append(1.0 if rel & set(ids[:top_k]) else 0.0)
 
@@ -71,6 +74,7 @@ def _build_metrics(
     for k in ks:
         metrics.recall[k] = sum(per_query_recall[k]) / n
     metrics.mrr = sum(per_query_mrr) / n
+    metrics.map = sum(per_query_map) / n
     metrics.ndcg = sum(per_query_ndcg) / n
     metrics.hit_rate = sum(per_query_hit) / n
     if cases and n_boot > 0:
@@ -79,6 +83,7 @@ def _build_metrics(
             for k in ks
         }
         metrics.mrr_ci = bootstrap_ci(per_query_mrr, n_boot=n_boot, confidence=confidence, seed=seed)
+        metrics.map_ci = bootstrap_ci(per_query_map, n_boot=n_boot, confidence=confidence, seed=seed)
         metrics.ndcg_ci = bootstrap_ci(per_query_ndcg, n_boot=n_boot, confidence=confidence, seed=seed)
         metrics.hit_rate_ci = bootstrap_ci(per_query_hit, n_boot=n_boot, confidence=confidence, seed=seed)
     metrics.latency = latency_stats(durations_ms)

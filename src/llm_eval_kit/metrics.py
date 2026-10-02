@@ -1,4 +1,4 @@
-"""检索评测指标：Recall@K、MRR、NDCG@10、bootstrap 置信区间与延迟分位数统计。
+"""检索评测指标：Recall@K、MRR、MAP@10、NDCG@10、bootstrap 置信区间与延迟分位数统计。
 
 相关度采用二元定义（命中/未命中），NDCG 因此是 binary NDCG。
 """
@@ -37,6 +37,25 @@ def ndcg_at_k(ranked: Sequence[str], relevant: Iterable[str], k: int = 10) -> fl
     ideal_hits = min(len(rel), k)
     idcg = sum(1.0 / math.log2(i + 2) for i in range(ideal_hits))
     return dcg / idcg if idcg else 0.0
+
+
+def average_precision(ranked: Sequence[str], relevant: Iterable[str], k: int = 10) -> float:
+    """AP@K：每条相关文档命中位置的精度均值，按 min(相关文档数, K) 归一。
+
+    与 ndcg_at_k 一致使用二元相关度；relevant 为空返回 0。
+    """
+    if k <= 0:
+        raise ValueError("k 必须为正整数")
+    rel = set(relevant)
+    if not rel:
+        return 0.0
+    hits = 0
+    precision_sum = 0.0
+    for i, doc_id in enumerate(ranked[:k]):
+        if doc_id in rel:
+            hits += 1
+            precision_sum += hits / (i + 1)
+    return precision_sum / min(len(rel), k)
 
 
 def percentile(values: Sequence[float], p: float) -> float:
@@ -137,11 +156,14 @@ class PipelineMetrics:
     ks: tuple[int, ...] = (1, 3, 5, 10)
     recall: dict[int, float] = field(default_factory=dict)
     mrr: float = 0.0
+    map: float = 0.0
     ndcg: float = 0.0  # NDCG@10
     hit_rate: float = 0.0  # top-K 内至少命中一条相关文档的查询占比
     recall_ci: dict[int, ConfidenceInterval] = field(default_factory=dict)
     mrr_ci: ConfidenceInterval | None = None
+    map_ci: ConfidenceInterval | None = None
     ndcg_ci: ConfidenceInterval | None = None
     hit_rate_ci: ConfidenceInterval | None = None
     latency: LatencyStats = field(default_factory=LatencyStats)
     # *_ci：对应聚合指标的 bootstrap 置信区间；评测集为空或关闭重采样时为空/None
+    # map / map_ci 是 MAP@10（各查询 AP@10 的均值），与 ndcg 同为 @10 口径

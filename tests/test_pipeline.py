@@ -138,9 +138,16 @@ class TestBootstrapConfidence:
         metrics = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3)
         assert set(metrics.recall_ci) == set(metrics.ks)
         assert metrics.mrr_ci is not None
+        assert metrics.map_ci is not None
         assert metrics.ndcg_ci is not None
         assert metrics.hit_rate_ci is not None
-        for ci in [*metrics.recall_ci.values(), metrics.mrr_ci, metrics.ndcg_ci, metrics.hit_rate_ci]:
+        for ci in [
+            *metrics.recall_ci.values(),
+            metrics.mrr_ci,
+            metrics.map_ci,
+            metrics.ndcg_ci,
+            metrics.hit_rate_ci,
+        ]:
             assert 0.0 <= ci.low <= ci.high <= 1.0
 
     def test_point_estimate_unchanged_by_bootstrap(self, toy_docs):
@@ -150,6 +157,7 @@ class TestBootstrapConfidence:
         again = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3)
         assert metrics.recall == again.recall
         assert metrics.mrr == again.mrr
+        assert metrics.map == again.map
         assert metrics.ndcg == again.ndcg
         assert metrics.hit_rate == again.hit_rate
 
@@ -159,6 +167,10 @@ class TestBootstrapConfidence:
         assert metrics.mrr_ci is not None
         assert metrics.mrr_ci.low == pytest.approx(1.0)
         assert metrics.mrr_ci.high == pytest.approx(1.0)
+        assert metrics.map == pytest.approx(1.0)
+        assert metrics.map_ci is not None
+        assert metrics.map_ci.low == pytest.approx(1.0)
+        assert metrics.map_ci.high == pytest.approx(1.0)
 
     def test_same_seed_reproducible_ci(self, toy_docs):
         cases = generate_eval_set(toy_docs, num_cases=6, seed=5)
@@ -181,6 +193,7 @@ class TestBootstrapConfidence:
         metrics = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3, n_boot=0)
         assert metrics.recall_ci == {}
         assert metrics.mrr_ci is None
+        assert metrics.map_ci is None
         assert metrics.ndcg_ci is None
         assert metrics.hit_rate_ci is None
 
@@ -195,6 +208,14 @@ class TestBootstrapConfidence:
         md = render_markdown(data)
         assert "bootstrap 置信区间" in md
         assert "[" in md and "]" in md
+
+    def test_markdown_renders_map_column(self, toy_docs):
+        cases = generate_eval_set(toy_docs, num_cases=4, seed=5)
+        data = run_evaluation(cases, {"bm25": BM25Retriever(toy_docs)}, top_k=3)
+        md = render_markdown(data)
+        assert "MAP@10" in md
+        primary = data.primary
+        assert f"{primary.map:.4f}" in md
 
     def test_markdown_without_ci_has_no_legend(self, toy_docs):
         cases = generate_eval_set(toy_docs, num_cases=4, seed=5)

@@ -53,7 +53,7 @@ def _fmt_metric(value: float, ci: ConfidenceInterval | None) -> str:
 def _ci_legend(data: ReportData) -> ConfidenceInterval | None:
     """取报告里第一个出现的置信区间，用于渲染图例；没有则返回 None。"""
     for p in data.pipelines:
-        for ci in (p.mrr_ci, p.ndcg_ci, p.hit_rate_ci, *p.recall_ci.values()):
+        for ci in (p.mrr_ci, p.map_ci, p.ndcg_ci, p.hit_rate_ci, *p.recall_ci.values()):
             if ci is not None:
                 return ci
     return None
@@ -72,15 +72,19 @@ def render_markdown(data: ReportData) -> str:
         ks = data.primary.ks
         lines.append("## 检索指标")
         lines.append("")
-        header = "| 管线 | " + " | ".join(f"Recall@{k}" for k in ks) + " | MRR | NDCG@10 | 命中率 | P50(ms) | P95(ms) |"
+        header = (
+            "| 管线 | " + " | ".join(f"Recall@{k}" for k in ks)
+            + " | MRR | MAP@10 | NDCG@10 | 命中率 | P50(ms) | P95(ms) |"
+        )
         lines.append(header)
-        lines.append("|" + "---|" * (len(ks) + 6))
+        lines.append("|" + "---|" * (len(ks) + 7))
         for p in data.pipelines:
             cells = [p.name] + [
                 _fmt_metric(p.recall.get(k, 0.0), p.recall_ci.get(k)) for k in ks
             ]
             cells += [
                 _fmt_metric(p.mrr, p.mrr_ci),
+                _fmt_metric(p.map, p.map_ci),
                 _fmt_metric(p.ndcg, p.ndcg_ci),
                 _fmt_metric(p.hit_rate, p.hit_rate_ci),
                 _fmt_ms(p.latency.p50),
@@ -182,7 +186,7 @@ def render_html(data: ReportData) -> str:
 
     if data.pipelines:
         ks = data.primary.ks
-        headers = ["管线"] + [f"Recall@{k}" for k in ks] + ["MRR", "NDCG@10", "命中率", "P50(ms)", "P95(ms)"]
+        headers = ["管线"] + [f"Recall@{k}" for k in ks] + ["MRR", "MAP@10", "NDCG@10", "命中率", "P50(ms)", "P95(ms)"]
         rows = []
         for p in data.pipelines:
             cells = [p.name] + [
@@ -190,6 +194,7 @@ def render_html(data: ReportData) -> str:
             ]
             cells += [
                 _fmt_metric(p.mrr, p.mrr_ci),
+                _fmt_metric(p.map, p.map_ci),
                 _fmt_metric(p.ndcg, p.ndcg_ci),
                 _fmt_metric(p.hit_rate, p.hit_rate_ci),
                 _fmt_ms(p.latency.p50),
