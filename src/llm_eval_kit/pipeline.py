@@ -9,8 +9,51 @@ from .attribution import Badcase, attribute_badcases, summarize_attribution
 from .judge import JudgeProvider, JudgeScore, JudgeSummary, LLMJudgeError, judge_summary
 from .metrics import PipelineMetrics, latency_stats, mrr, ndcg_at_k, recall_at_k
 from .report import ReportData
-from .retrieval import BaseRetriever
+from .retrieval import BaseRetriever, RetrievalResult
 from .synth import EvalCase
+
+
+def _collect_rankings(
+    cases: list[EvalCase],
+    retriever: BaseRetriever,
+    top_k: int,
+) -> tuple[dict[str, list[RetrievalResult]], list[float]]:
+    """对每条用例检索一次，返回 {qid: 检索结果} 与每条查询的真实耗时（毫秒）。
+
+    结果在管线内复用于指标、归因与 judge 上下文，避免重复检索。
+    """
+    ranked: dict[str, list[RetrievalResult]] = {}
+    durations_ms: list[float] = []
+    for case in cases:
+        start = time.perf_counter()
+        results = retriever.retrieve(case.query, top_k=top_k)
+        durations_ms.append((time.perf_counter() - start) * 1000)
+        ranked[case.qid] = results
+    return ranked, durations_ms
+
+
+def _build_metrics(
+    name: str,
+    cases: list[EvalCase],
+    ranked: dict[str, list[RetrievalResult]],
+    durations_ms: list[float],
+    *,
+    top_k: int,
+    ks: tuple[int, ...],
+) -> PipelineMetrics:
+    """基于已收集的检索结果聚合指标（不做任何检索）。"""
+    ranked_ids = {qid: [r.doc_id for r in results] for qid, results in ranked.items()}
+    n = len(cases) or 1
+    metrics = PipelineMetrics(name=name, ks=tuple(ks))
+    for k in ks:
+        metrics.recall[k] = sum(recall_at_k(ranked_ids[c.qid], c.relevant_ids, k) for c in cases) / n
+    metrics.mrr = sum(mrr(ranked_ids[c.qid], c.relevant_ids) for c in cases) / n
+    metrics.ndcg = sum(ndcg_at_k(ranked_ids[c.qid], c.relevant_ids, 10) for c in cases) / n
+    metrics.hit_rate = sum(
+        1 for c in cases if set(ranked_ids[c.qid][:top_k]) & set(c.relevant_ids)
+    ) / n
+    metrics.latency = latency_stats(durations_ms)
+    return metrics
 
 
 def run_retrieval(
@@ -21,24 +64,8 @@ def run_retrieval(
     ks: tuple[int, ...] = (1, 3, 5, 10),
 ) -> PipelineMetrics:
     """在评测集上运行一条检索管线，返回聚合指标与真实计时延迟。"""
-    ranked_by_qid: dict[str, list[str]] = {}
-    durations_ms: list[float] = []
-    for case in cases:
-        start = time.perf_counter()
-        results = retriever.retrieve(case.query, top_k=top_k)
-        durations_ms.append((time.perf_counter() - start) * 1000)
-        ranked_by_qid[case.qid] = [r.doc_id for r in results]
-    n = len(cases) or 1
-    metrics = PipelineMetrics(name=retriever.name, ks=tuple(ks))
-    for k in ks:
-        metrics.recall[k] = sum(recall_at_k(ranked_by_qid[c.qid], c.relevant_ids, k) for c in cases) / n
-    metrics.mrr = sum(mrr(ranked_by_qid[c.qid], c.relevant_ids) for c in cases) / n
-    metrics.ndcg = sum(ndcg_at_k(ranked_by_qid[c.qid], c.relevant_ids, 10) for c in cases) / n
-    metrics.hit_rate = sum(
-        1 for c in cases if set(ranked_by_qid[c.qid][:top_k]) & set(c.relevant_ids)
-    ) / n
-    metrics.latency = latency_stats(durations_ms)
-    return metrics
+    ranked, durations_ms = _collect_rankings(cases, retriever, top_k)
+    return _build_metrics(retriever.name, cases, ranked, durations_ms, top_k=top_k, ks=ks)
 
 
 def run_evaluation(
@@ -55,38 +82,44 @@ def run_evaluation(
     - retrievers：管线名 → 检索器，第一个视为主管线（badcase 示例取自主管线）；
     - judge + answers：可选。answers[qid] 是待评系统答案，
       与用例自带的参考答案一起交给裁判评分；裁判不可用时整段优雅跳过。
+    - 每条查询对每个检索器只检索一次，指标/归因/judge 上下文共用同一批结果。
     """
     if not retrievers:
         raise ValueError("至少需要一个检索管线")
     answers = answers or {}
-    retriever_list = list(retrievers.values())
 
-    pipelines = [run_retrieval(cases, r, top_k=top_k, ks=ks) for r in retriever_list]
+    pipelines: list[PipelineMetrics] = []
+    rankings: dict[str, dict[str, list[RetrievalResult]]] = {}
+    for name, retriever in retrievers.items():
+        ranked, durations_ms = _collect_rankings(cases, retriever, top_k)
+        rankings[name] = ranked
+        pipelines.append(_build_metrics(name, cases, ranked, durations_ms, top_k=top_k, ks=ks))
 
     attribution: dict[str, dict[str, int]] = {}
     badcases_by_pipeline: dict[str, list[Badcase]] = {}
-    for name, retriever in retrievers.items():
-        ranked_by_qid = {
-            c.qid: [x.doc_id for x in retriever.retrieve(c.query, top_k=top_k)] for c in cases
-        }
-        badcases = attribute_badcases(cases, ranked_by_qid, retriever.doc_texts, top_k=top_k)
+    for name, ranked in rankings.items():
+        ranked_ids = {qid: [r.doc_id for r in results] for qid, results in ranked.items()}
+        badcases = attribute_badcases(
+            cases, ranked_ids, retrievers[name].doc_texts, top_k=top_k
+        )
         attribution[name] = summarize_attribution(badcases)
         badcases_by_pipeline[name] = badcases
 
     summary = JudgeSummary()
     if judge is not None:
+        primary_name = next(iter(retrievers))
+        primary_ranked = rankings[primary_name]
+        texts = retrievers[primary_name].doc_texts
         try:
-            primary = retriever_list[0]
-            texts = primary.doc_texts
             scores: list[JudgeScore] = []
             for case in cases:
                 system_answer = answers.get(case.qid, "")
                 if not system_answer or not case.answer:
                     continue
                 context = ""
-                ranked = [x.doc_id for x in primary.retrieve(case.query, top_k=1)]
-                if ranked and ranked[0] in texts:
-                    context = texts[ranked[0]]
+                top1 = primary_ranked.get(case.qid, [])[:1]
+                if top1 and top1[0].doc_id in texts:
+                    context = texts[top1[0].doc_id]
                 scores.append(
                     judge.score(query=case.query, answer=system_answer, reference=case.answer, context=context)
                 )
@@ -99,7 +132,7 @@ def run_evaluation(
     primary_name = next(iter(retrievers))
     return ReportData(
         generated_at=datetime.now().isoformat(timespec="seconds"),
-        corpus_size=len(retriever_list[0].doc_texts),
+        corpus_size=len(retrievers[primary_name].doc_texts),
         eval_size=len(cases),
         top_k=top_k,
         pipelines=pipelines,

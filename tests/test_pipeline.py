@@ -2,8 +2,8 @@ import pytest
 
 from llm_eval_kit.judge import LLMUnavailable, MockJudge
 from llm_eval_kit.pipeline import run_evaluation, run_retrieval
-from llm_eval_kit.retrieval import BM25Retriever, TFRetriever
 from llm_eval_kit.report import render_markdown
+from llm_eval_kit.retrieval import BM25Retriever, TFRetriever
 from llm_eval_kit.synth import EvalCase, generate_eval_set
 
 
@@ -92,6 +92,33 @@ class TestRunEvaluation:
         data = run_evaluation(cases, {"bm25": BM25Retriever(toy_docs)})
         assert data.judge.n_scored == 0
         assert not data.judge.skipped
+
+    def test_retriever_called_once_per_case(self, toy_docs):
+        """同一查询对同一检索器只检索一次，指标/归因/judge 上下文复用结果。"""
+        from llm_eval_kit.retrieval import BM25Retriever
+
+        class CountingRetriever:
+            def __init__(self, inner):
+                self._inner = inner
+                self.calls = 0
+
+            @property
+            def name(self):
+                return self._inner.name
+
+            @property
+            def doc_texts(self):
+                return self._inner.doc_texts
+
+            def retrieve(self, query, top_k=10):
+                self.calls += 1
+                return self._inner.retrieve(query, top_k=top_k)
+
+        cases = generate_eval_set(toy_docs, num_cases=3, seed=5)
+        answers = {c.qid: c.answer for c in cases}
+        spy = CountingRetriever(BM25Retriever(toy_docs))
+        run_evaluation(cases, {"bm25": spy}, top_k=3, judge=MockJudge(), answers=answers)
+        assert spy.calls == len(cases)
 
     def test_report_data_renders(self, toy_docs):
         cases = generate_eval_set(toy_docs, num_cases=3, seed=5)
