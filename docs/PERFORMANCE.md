@@ -68,6 +68,20 @@ python -m llm_eval_kit.cli demo --out reports
 
 错误路径同日在真实网络下验证：指向无效/未授权端点的调用分别返回 HTTP 307/404/401，均被包装为 `LLMJudgeError` 而非裸异常，与管线的优雅跳过承诺一致。
 
+### OpenAI 官方端点与其他 provider 的实测边界（2026-10-02 补充）
+
+对评审要求补充实测的端点，同日做了真实尝试（key 只用环境变量，输出脱敏）：
+
+| 端点 | 结果 | 说明 |
+|---|---|---|
+| `api.openai.com/v1`（OpenAI 官方，gpt-4o-mini） | HTTP 401 | 环境 `OPENAI_API_KEY` 并非 OpenAI key（为内部网关 key），官方端点无法在本环境实测 |
+| `api.z.ai/api/paas/v4`（z.ai 公网文档路径） | HTTP 401 | 环境 key 未被 z.ai 公网接受 |
+| ZCODE/ZAI 网关（环境变量 base URL 及路径变体） | HTTP 307/404/401 | 网关路由契约未知，未取得成功响应 |
+
+结论：OpenAI 兼容协议的真实请求/解析/错误包装路径已由 DashScope 实测覆盖；OpenAI 官方端点缺少可用 key，无法实测——这不是假设，而是上表 401 的实测结果。任何持有对应 key 的人可设 `EVAL_REAL_LLM_SMOKE=1` 与 `EVAL_LLM_*` 环境变量后一键复验（冒烟测试已就绪）。
+
+本轮还据实测发现改进了错误诊断：`LLMJudgeError` 的 HTTP 错误信息现在会带上服务端响应体摘要（如 OpenAI 的 `invalid_api_key`），排障时可直接看到拒绝原因。
+
 HTTP 层由本地真实 socket 集成测试覆盖（`tests/test_judge_real_http.py`：127.0.0.1 服务器 + 完整 urlopen 链路）。仓库测试套件保持全离线；真实冒烟测试默认跳过，设 `EVAL_REAL_LLM_SMOKE=1` 与 `EVAL_LLM_*` 端点环境变量后可随时复验。
 
 ## 规模说明

@@ -197,7 +197,14 @@ def _http_post_json(url: str, payload: dict, *, api_key: str, timeout: float) ->
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
-        raise LLMJudgeError(f"LLM 服务返回 HTTP {exc.code}") from exc
+        # 尽力读取错误响应体（如 OpenAI 的 invalid_api_key），帮助排障 provider 配置
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")[:200].strip()
+        except Exception:  # 诊断读取是尽力而为，任何失败都不掩盖原始错误
+            detail = ""
+        suffix = f"：{detail}" if detail else ""
+        raise LLMJudgeError(f"LLM 服务返回 HTTP {exc.code}{suffix}") from exc
     except OSError as exc:  # URLError/socket 超时/连接拒绝均为 OSError 子类
         raise LLMJudgeError(f"LLM 服务连接失败：{exc}") from exc
     try:

@@ -92,7 +92,7 @@ class TestRealHttpLayer:
         assert "什么是 BM25" in local_server.captured["payload"]["messages"][0]["content"]
 
     def test_http_error_wrapped_over_real_socket(self, local_server):
-        """服务器返回 401 时，HTTPError 应被包装为 LLMJudgeError。"""
+        """服务器返回 401 时，HTTPError 应被包装为 LLMJudgeError，且带响应体摘要。"""
         local_server.force_status = 401
         local_server.force_body = b'{"error": "unauthorized"}'
         judge = OpenAICompatibleJudge(
@@ -102,7 +102,7 @@ class TestRealHttpLayer:
             timeout=5.0,
             allow_local=True,
         )
-        with pytest.raises(LLMJudgeError, match="401"):
+        with pytest.raises(LLMJudgeError, match='HTTP 401.*unauthorized'):
             judge.score(query="q", answer="a")
 
     def test_html_error_page_wrapped_over_real_socket(self, local_server):

@@ -258,6 +258,29 @@ class TestNetworkRobustness:
         with pytest.raises(LLMJudgeError, match="502"):
             self._judge().score(query="q", answer="a")
 
+    def test_http_error_body_included_in_message(self, monkeypatch):
+        """HTTPError 的响应体摘要应进入错误信息，方便排障 provider 配置。"""
+        import io
+        import urllib.error
+
+        def fake_urlopen(request, timeout):
+            body = io.BytesIO(b'{"error": {"message": "invalid_api_key"}}')
+            raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, body)
+
+        monkeypatch.setattr(judge_module.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(LLMJudgeError, match="invalid_api_key"):
+            self._judge().score(query="q", answer="a")
+
+    def test_http_error_without_body_still_wrapped(self, monkeypatch):
+        import urllib.error
+
+        def fake_urlopen(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 503, "Service Unavailable", {}, None)
+
+        monkeypatch.setattr(judge_module.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(LLMJudgeError, match="503"):
+            self._judge().score(query="q", answer="a")
+
     def test_html_error_page_wrapped(self, monkeypatch):
         def fake_urlopen(request, timeout):
             return TestNetworkRobustness._FakeResponse(b"<html><body>502 Bad Gateway</body></html>")
