@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-eval-kit"
+version = "0.1.0"
+description = "离线可跑的 RAG 检索与 LLM 应用评测工具库：合成评测集、检索指标、LLM-as-judge、badcase 归因与报告输出"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "lii-lii321" }]
+keywords = ["rag", "llm", "evaluation", "bm25", "metrics", "llm-as-judge", "retrieval"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+llm-eval-kit = "llm_eval_kit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+llm_eval_kit = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
