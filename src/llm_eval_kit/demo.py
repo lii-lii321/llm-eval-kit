@@ -11,11 +11,10 @@ from pathlib import Path
 
 from .attribution import REASON_LABELS_ZH
 from .corpus import Doc
-from .judge import DIMENSIONS_ZH, MockJudge
-from .metrics import PipelineMetrics
+from .judge import DIMENSIONS_ZH, JudgeProvider, MockJudge
 from .pipeline import run_evaluation
+from .report import ReportData, write_reports
 from .retrieval import BaseRetriever, BM25Retriever, HybridRetriever, TFRetriever
-from .report import write_reports
 from .synth import generate_eval_set
 
 # (doc_id, 正文)。刻意让主题词以短中文串开头，规则合成器能提出自然短语。
@@ -98,8 +97,8 @@ def run_demo(
     seed: int = 42,
     num_cases: int = 24,
     paraphrase_ratio: float = 1.0,
-    judge: object | None = None,
-) -> "object":
+    judge: JudgeProvider | None = None,
+) -> ReportData:
     """跑通完整评测闭环并写出报告，返回 ReportData。
 
     paraphrase_ratio=1.0：对所有含改写词典键的查询都尝试改写，
@@ -133,17 +132,23 @@ def run_demo(
     return data
 
 
-def print_summary(data) -> None:
+def print_summary(data: ReportData) -> None:
     """把报告数据打印成控制台摘要（demo 输出）。"""
     print("== llm-eval-kit demo ==")
     print(f"语料文档数: {data.corpus_size}  评测集规模: {data.eval_size}  top-K: {data.top_k}")
     ks = data.pipelines[0].ks if data.pipelines else ()
-    header = "管线".ljust(8) + "".join(f"Recall@{k}".ljust(12) for k in ks) + "MRR".ljust(8) + "NDCG@10".ljust(10) + "P50(ms)".ljust(10)
+    header = (
+        "管线".ljust(8)
+        + "".join(f"Recall@{k}".ljust(12) for k in ks)
+        + "MRR".ljust(8)
+        + "NDCG@10".ljust(10)
+        + "P50(ms)".ljust(10)
+    )
     print(header)
-    for p in data.pipelines:  # type: PipelineMetrics
-        row = p.name.ljust(8)
-        row += "".join(f"{p.recall.get(k, 0.0):<12.4f}" for k in ks)
-        row += f"{p.mrr:<8.4f}{p.ndcg:<10.4f}{p.latency.p50:<10.3f}"
+    for metrics in data.pipelines:
+        row = metrics.name.ljust(8)
+        row += "".join(f"{metrics.recall.get(k, 0.0):<12.4f}" for k in ks)
+        row += f"{metrics.mrr:<8.4f}{metrics.ndcg:<10.4f}{metrics.latency.p50:<10.3f}"
         print(row)
     if data.attribution:
         primary_name = next(iter(data.attribution))

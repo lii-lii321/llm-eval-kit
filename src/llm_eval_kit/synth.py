@@ -22,7 +22,7 @@ from .corpus import Doc
 # 常见虚词/单字，用于把长中文串切分成更短的候选短语
 STOP_CHARS = "的了是在和与并或把被对从到能可要会中也不就而及等上都为以自若则很还比各个种将"
 
-_SIMPLIE_TEMPLATES = (
+_SIMPLE_TEMPLATES = (
     "什么是{kw}？",
     "介绍一下{kw}",
     "{kw}的作用是什么？",
@@ -137,7 +137,7 @@ def generate_eval_set(
         if kw2 and rng.random() < 0.3:
             query = rng.choice(_PAIR_TEMPLATES).format(kw1=kw1, kw2=kw2)
         else:
-            query = rng.choice(_SIMPLIE_TEMPLATES).format(kw=kw1)
+            query = rng.choice(_SIMPLE_TEMPLATES).format(kw=kw1)
         paraphrased = False
         if paraphrase_ratio > 0 and synonyms and rng.random() < paraphrase_ratio:
             for key, value in synonyms.items():

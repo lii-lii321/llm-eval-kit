@@ -1,3 +1,5 @@
+import pytest
+
 from llm_eval_kit.cli import main
 from llm_eval_kit.demo import DEMO_DOCS, DEMO_SYNONYMS, ExtractiveAnswerer, build_demo_corpus, run_demo
 from llm_eval_kit.retrieval import BM25Retriever
@@ -68,3 +70,25 @@ class TestCli:
         rc = main(["--out", str(tmp_path), "--num-cases", "6"])
         assert rc == 0
         assert (tmp_path / "eval_report.md").exists()
+
+    def test_num_cases_zero_rejected_with_friendly_error(self, tmp_path):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["demo", "--out", str(tmp_path), "--num-cases", "0"])
+        assert excinfo.value.code == 2
+
+    def test_num_cases_negative_rejected(self, tmp_path):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["demo", "--out", str(tmp_path), "--num-cases", "-3"])
+        assert excinfo.value.code == 2
+
+    def test_num_cases_non_integer_rejected(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["demo", "--out", str(tmp_path), "--num-cases", "abc"])
+        assert excinfo.value.code == 2
+        assert "正整数" in capsys.readouterr().err
+
+    def test_paraphrase_ratio_out_of_range_rejected(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["demo", "--out", str(tmp_path), "--paraphrase-ratio", "1.5"])
+        assert excinfo.value.code == 2
+        assert "[0, 1]" in capsys.readouterr().err
