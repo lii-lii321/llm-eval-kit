@@ -16,6 +16,7 @@ import ipaddress
 import json
 import os
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -179,7 +180,11 @@ def _validate_base_url(url: str, *, allow_local: bool) -> str:
 
 
 def _http_post_json(url: str, payload: dict, *, api_key: str, timeout: float) -> dict:
-    """向 OpenAI 兼容接口发 POST；模块级函数，便于测试替换。"""
+    """向 OpenAI 兼容接口发 POST；模块级函数，便于测试替换。
+
+    所有网络与响应解析失败（URLError/超时/HTTP 错误码/响应非 JSON）
+    都包装成 LLMJudgeError 抛出，保证上层“优雅跳过”承诺成立。
+    """
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -188,8 +193,17 @@ def _http_post_json(url: str, payload: dict, *, api_key: str, timeout: float) ->
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
     )
     # base_url 已通过 _validate_base_url 校验协议与目标地址
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        raise LLMJudgeError(f"LLM 服务返回 HTTP {exc.code}") from exc
+    except OSError as exc:  # URLError/socket 超时/连接拒绝均为 OSError 子类
+        raise LLMJudgeError(f"LLM 服务连接失败：{exc}") from exc
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise LLMJudgeError(f"LLM 服务响应不是 JSON（可能是网关错误页）：{raw[:200]!r}") from exc
 
 
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\n?|\n?```$")
@@ -237,7 +251,7 @@ class OpenAICompatibleJudge:
         self.timeout = timeout
 
     @classmethod
-    def from_env(cls, environ: dict | None = None) -> "OpenAICompatibleJudge":
+    def from_env(cls, environ: dict | None = None) -> OpenAICompatibleJudge:
         env = os.environ if environ is None else environ
         return cls(
             base_url=env.get("EVAL_LLM_BASE_URL", DEFAULT_BASE_URL),

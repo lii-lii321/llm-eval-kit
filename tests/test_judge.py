@@ -44,7 +44,10 @@ class TestMockJudge:
     def test_clarity_prefers_short_sentences(self):
         judge = MockJudge()
         crisp = "第一步：明确目标。第二步：准备方案。"
-        rambling = "这个问题其实需要从多个不同的角度出发进行综合性的考量与分析梳理，然后才有可能得到一个相对全面且兼顾各方利益诉求的结论性认识。" + "补" * 60 + "。"
+        rambling = (
+            "这个问题其实需要从多个不同的角度出发进行综合性的考量与分析梳理，"
+            "然后才有可能得到一个相对全面且兼顾各方利益诉求的结论性认识。" + "补" * 60 + "。"
+        )
         assert judge.score(query="q", answer=crisp, reference="").scores["clarity"] > judge.score(
             query="q", answer=rambling, reference=""
         ).scores["clarity"]
@@ -118,15 +121,8 @@ class TestOpenAICompatibleJudgeBehavior:
             captured["url"] = url
             captured["payload"] = payload
             captured["api_key"] = api_key
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": '{"correctness": 4, "relevance": 5, "actionability": 3, "clarity": 4, "rationale": "ok"}'
-                        }
-                    }
-                ]
-            }
+            content = '{"correctness": 4, "relevance": 5, "actionability": 3, "clarity": 4, "rationale": "ok"}'
+            return {"choices": [{"message": {"content": content}}]}
 
         monkeypatch.setattr(judge_module, "_http_post_json", fake_post)
         result = judge.score(query="问题", answer="答案", reference="参考")
@@ -179,6 +175,79 @@ class TestOpenAICompatibleJudgeBehavior:
         )
         result = judge.score(query="q", answer="a")
         assert result.scores["correctness"] == 4
+
+
+class TestNetworkRobustness:
+    """网络与响应异常必须包装成 LLMJudgeError，保证管线可优雅跳过。"""
+
+    class _FakeResponse:
+        def __init__(self, body: bytes):
+            self._body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def _judge(self) -> OpenAICompatibleJudge:
+        return OpenAICompatibleJudge(base_url="https://api.example.com/v1", api_key="k", model="m")
+
+    def test_urlopen_error_wrapped(self, monkeypatch):
+        import urllib.error
+
+        def fake_urlopen(request, timeout):
+            raise urllib.error.URLError("<urlopen error timed out>")
+
+        monkeypatch.setattr(judge_module.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(LLMJudgeError):
+            self._judge().score(query="q", answer="a")
+
+    def test_timeout_wrapped(self, monkeypatch):
+        def fake_urlopen(request, timeout):
+            raise TimeoutError("timed out")
+
+        monkeypatch.setattr(judge_module.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(LLMJudgeError):
+            self._judge().score(query="q", answer="a")
+
+    def test_http_error_wrapped(self, monkeypatch):
+        import urllib.error
+
+        def fake_urlopen(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 502, "Bad Gateway", {}, None)
+
+        monkeypatch.setattr(judge_module.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(LLMJudgeError, match="502"):
+            self._judge().score(query="q", answer="a")
+
+    def test_html_error_page_wrapped(self, monkeypatch):
+        def fake_urlopen(request, timeout):
+            return TestNetworkRobustness._FakeResponse(b"<html><body>502 Bad Gateway</body></html>")
+
+        monkeypatch.setattr(judge_module.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(LLMJudgeError, match="不是 JSON"):
+            self._judge().score(query="q", answer="a")
+
+    def test_run_evaluation_skips_on_connection_failure(self, toy_docs):
+        """指向 127.0.0.1:9（端口必拒绝）的裁判应让评测优雅跳过而不是崩溃。"""
+        from llm_eval_kit.pipeline import run_evaluation
+        from llm_eval_kit.retrieval import BM25Retriever
+        from llm_eval_kit.synth import generate_eval_set
+
+        judge = OpenAICompatibleJudge(
+            base_url="http://127.0.0.1:9/v1", api_key="test-placeholder-key", model="m",
+            timeout=1.0, allow_local=True,
+        )
+        cases = generate_eval_set(toy_docs, num_cases=2, seed=5)
+        answers = {c.qid: "某个系统答案" for c in cases}
+        data = run_evaluation(cases, {"bm25": BM25Retriever(toy_docs)}, judge=judge, answers=answers)
+        assert data.judge.skipped
+        assert data.judge.skip_reason
+        assert data.eval_size == 2  # 检索评测本身不受影响
 
 
 class TestParseAndSummary:
