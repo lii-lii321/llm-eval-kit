@@ -35,7 +35,7 @@ llm-eval-kit 支持两种构造评测集的方式：规则合成（`generate_eva
 | `query_id` | 是 | 非空字符串，全文件唯一 |
 | `query` | 是 | 非空字符串，用户的真实问法 |
 | `relevant_doc_ids` | 是 | 非空字符串数组，语料中的相关文档 ID，行内不得重复 |
-| `grades` | 否 | 对象 `{doc_id: 0\|1\|2}`，键必须落在该行 `relevant_doc_ids` 内，值取 0/1/2 整数（JSON 布尔值不合法） |
+| `grades` | 否 | 对象 `{doc_id: 0\|1\|2}`，键必须落在该行 `relevant_doc_ids` 内，值取 0/1/2 整数（JSON 布尔值不合法）。评测集任一查询带 `grades` 时，评测自动产出分级相关度 Weighted NDCG@10（指数增益 2^g − 1，见下文"当前限制"） |
 | `notes` | 否 | 字符串，标注备注（边界情况说明、标注依据等） |
 
 未知字段一律报错（防 `relevant_doc_id` 这类拼写笔误静默丢标注）。
@@ -134,9 +134,13 @@ data = run_evaluation(cases, {"bm25": BM25Retriever(docs)}, top_k=10)
 
 ## 当前限制
 
-- **grades 只校验不参与指标**：分级相关度经校验后透传进 `EvalCase.meta`，但
-  Recall/MRR/MAP/NDCG 仍按二元相关度计算（与 README 已知限制"NDCG 使用二元相关度"同源）。
-  分级相关度指标（如加权 NDCG）是规划方向，格式先行是为了标注数据不用返工；
+- **分级相关度只进入 Weighted NDCG@10，Recall/MRR/MAP 仍是二元口径**：评测集任一查询带
+  `grades` 时，评测自动产出 Weighted NDCG@10（指数增益 2^g − 1；查询内未标注分级的
+  相关文档按增益 1 计入，理想 DCG 用该查询全部相关文档的增益降序取前 K 位），随其他
+  聚合指标附 bootstrap 置信区间，门禁名 `weighted_ndcg` / `weighted_ndcg_at_10`；
+  整个评测集无 `grades` 时该指标不产出（报告显示 —、门禁报不可用），不做 0 值冒充。
+  Recall/MRR/MAP 与二元 NDCG@10 仍按二元相关度计算（与 README 已知限制同源），
+  分级信息不参与这些指标。实测数字见 [PERFORMANCE.md](PERFORMANCE.md) 的 dataset_demo 段；
 - **数据集通道暂无参考答案字段**：JSONL 不含 reference answer，`--dataset` 跑的
   评测中 LLM-as-judge 段会静默跳过（judge 需要参考答案）；需要 judge 时可暂用
   合成评测集，或在代码里给 `EvalCase.answer` 赋值后走库接口；

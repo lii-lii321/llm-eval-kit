@@ -8,7 +8,9 @@ CI 中指标跌破阈值时进程以退出码 1 结束，阻断合并或发布�
 - ``recall_at_<K>``：Recall@K（K 取决于本次评测的 ks，默认 1/3/5/10）
 - ``mrr``：MRR
 - ``map`` / ``map_at_10``：MAP@10
-- ``ndcg`` / ``ndcg_at_10``：NDCG@10
+- ``ndcg`` / ``ndcg_at_10``：NDCG@10（二元相关度）
+- ``weighted_ndcg`` / ``weighted_ndcg_at_10``：Weighted NDCG@10（分级相关度，
+  仅当评测集带 grades 时可门禁；无 grades 时报错说明不可用，而非按 0 判定）
 - ``hit_rate``：top-K 命中率
 """
 
@@ -28,10 +30,16 @@ _FIXED_METRICS: dict[str, str] = {
     "hit_rate": "hit_rate",
 }
 
+# 分级相关度指标：值可能为 None（评测集未提供 grades），不可用时显式报错
+_GRADED_METRICS: dict[str, str] = {
+    "weighted_ndcg": "weighted_ndcg",
+    "weighted_ndcg_at_10": "weighted_ndcg",
+}
+
 
 def supported_metric_names(ks: Sequence[int] = (1, 3, 5, 10)) -> list[str]:
     """列出当前评测口径下全部门禁可用指标名。"""
-    return [f"recall_at_{k}" for k in ks] + list(_FIXED_METRICS)
+    return [f"recall_at_{k}" for k in ks] + list(_FIXED_METRICS) + list(_GRADED_METRICS)
 
 
 def parse_fail_under(spec: str) -> tuple[str, float]:
@@ -68,6 +76,15 @@ def metric_value(metrics: PipelineMetrics, name: str) -> float:
             f"指标 {name!r} 不可用：本次评测未计算该 Recall@K（可用 K：{available_ks}）。"
             f"支持的全部指标名：{supported_metric_names(available_ks)}"
         )
+    attr = _GRADED_METRICS.get(name)
+    if attr is not None:
+        value = getattr(metrics, attr)
+        if value is None:
+            raise ValueError(
+                f"指标 {name!r} 不可用：本次评测集未提供 grades 分级标注，Weighted NDCG@10 未计算"
+                f"（该指标不做 0 值判定）。支持的全部指标名：{supported_metric_names(sorted(metrics.recall))}"
+            )
+        return float(value)
     attr = _FIXED_METRICS.get(name)
     if attr is not None:
         return float(getattr(metrics, attr))

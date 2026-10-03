@@ -14,7 +14,7 @@
 
 - **合成评测集生成**：从纯文本文档/题库构造 query-doc-answer 三元组。规则式生成器（词频 × 逆文档频率选关键词 + 查询模板），不依赖真实 LLM，固定 seed 完全可复现；支持同义改写构造词面不匹配的困难样本
 - **评测数据集管理（JSONL）**：人工标注查询集的加载/校验/评测通道——`load_dataset` 严格校验（缺字段、重复 query_id、空相关文档等报错均带行号），`_meta` 元信息行记录标注日期/标注人/版本，`DatasetStats` 输出条数与查询长度分布；CLI `--dataset` 从文件读查询批量评测，与 `--fail-under` 门禁组合可用，见 [docs/datasets.md](docs/datasets.md)
-- **检索指标**：Recall@K、MRR、MAP@10、NDCG@10（二元相关度）、命中率与 P50/P95 延迟，聚合指标附 bootstrap 95% 置信区间（固定 seed 完全可复现），支持多路检索管线同台对比
+- **检索指标**：Recall@K、MRR、MAP@10、NDCG@10（二元相关度）、Weighted NDCG@10（分级相关度，评测集带 `grades` 时自动产出）、命中率与 P50/P95 延迟，聚合指标附 bootstrap 95% 置信区间（固定 seed 完全可复现），支持多路检索管线同台对比
 - **外部检索器接入**：Retriever 协议（duck typing）+ `CallableRetriever` 宽容归一化——任何检索系统（向量库 / Elasticsearch / 自研 RAG）实现一个 `retrieve(query, top_k)` 方法即可同台评测，协议不满足时报可诊断错误，见 [docs/ADAPTERS.md](docs/ADAPTERS.md)
 - **评测回归门禁**：`--fail-under 指标名=阈值`（可多次），任一指标低于阈值进程退出码 1 并输出实测值 vs 阈值 vs 差距，可直接作 CI 合并卡点
 - **LLM-as-judge 四维评分**：正确性 / 相关性 / 可操作性 / 清晰度（1-5 分）。provider 可插拔——内置确定性 `MockJudge`（离线可跑、测试用）；`OpenAICompatibleJudge` 读环境变量，未配置 key 时优雅跳过
@@ -130,7 +130,8 @@ python -m llm_eval_kit.cli demo --out reports \
 ```
 
 支持的指标名：`recall_at_<K>`（随评测 ks，默认 1/3/5/10）、`mrr`、`map` / `map_at_10`、
-`ndcg` / `ndcg_at_10`、`hit_rate`。
+`ndcg` / `ndcg_at_10`、`hit_rate`、`weighted_ndcg` / `weighted_ndcg_at_10`（分级相关度，
+仅当评测集带 `grades` 时可门禁；无 `grades` 时报错提示不可用，而非按 0 判定）。
 
 GitHub Actions 示例：指标回退时 PR 直接变红，评测报告作为 artifact 留档：
 
@@ -193,6 +194,8 @@ push 到 main 时重新生成，生成步骤同样带 `--fail-under`：指标不
 | hybrid | 0.9167 [0.7917, 1.0000] | 0.9583 [0.8750, 1.0000] | 0.9375 [0.8333, 1.0000] | 0.9375 [0.8333, 1.0000] | 0.9430 [0.8442, 1.0000] | 0.16 |
 
 MAP@10 与 MRR 数值相同是 demo 语料特性所致：每条查询只有 1 篇相关文档，此时 AP 退化为倒数排名。
+demo 评测集（合成）无 `grades` 分级标注，报告中的 Weighted NDCG@10 列显示 —（诚实降级）；
+带 `grades` 的评测集实测见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md) 的 dataset_demo 段。
 
 badcase 归因：关键词不匹配 1 条（改写样本「什么是梦话？」——原主题词「幻觉」被换成零词面重叠的表达，纯词面检索的教科书式失败）；MockJudge 四维均分：正确性 4.83 / 相关性 5.00 / 可操作性 1.30 / 清晰度 4.43。
 
@@ -206,7 +209,7 @@ src/llm_eval_kit/
 ├── synth.py         # 规则式合成评测集生成器
 ├── retrieval.py     # BM25 / 词频 / 混合检索器
 ├── adapters.py      # Retriever 协议、CallableRetriever 与外部检索器适配
-├── metrics.py       # Recall@K / MRR / MAP@10 / NDCG@10 / bootstrap 置信区间 / 延迟分位数
+├── metrics.py       # Recall@K / MRR / MAP@10 / NDCG@10 / 加权 NDCG（分级相关度）/ bootstrap 置信区间 / 延迟分位数
 ├── gates.py         # 评测回归门禁（--fail-under 的解析与判定）
 ├── judge.py         # LLM-as-judge（MockJudge + OpenAICompatibleJudge）
 ├── attribution.py   # badcase 三类归因
@@ -215,7 +218,7 @@ src/llm_eval_kit/
 ├── demo.py          # 玩具语料与 demo 编排
 └── cli.py           # 命令行入口
 examples/dataset_demo.jsonl  # 合成 demo 评测集（非人工标注）
-tests/               # 290 个离线测试，零网络依赖
+tests/               # 326 个离线测试，零网络依赖
 docs/PERFORMANCE.md  # demo 实测性能报告
 docs/ADAPTERS.md     # 外部检索器接入指南（含 Math_Tutor_RAG 适配示例）
 docs/datasets.md     # 评测数据集格式规范与人工标注指南
@@ -227,7 +230,7 @@ docs/datasets.md     # 评测数据集格式规范与人工标注指南
 - **中文分词是字符二元组近似**：不是真正的中文分词，跨词二元组（如「索评」）会引入噪声；对检索效果敏感的场景建议接 jieba 或真实向量检索
 - **检索器是单机玩具实现**：BM25/TF 为纯 Python 教学实现，适合几百块以内的语料，未做性能优化；得分为 0（零词面重叠）的文档不返回结果
 - **外部检索器的 badcase 归因依赖 doc_texts**：外部检索器不提供 doc_id → 原文映射时，归因会把所有未命中归为"语料缺失"，与真实失败机理可能不符（机制与建议见 [docs/ADAPTERS.md](docs/ADAPTERS.md)）；显式传入 `doc_texts` 可获得正确归因
-- **NDCG 使用二元相关度**：不支持分级相关度标注（graded relevance）。JSONL 评测集的 `grades` 字段（0/1/2）目前只做格式校验并透传进 `EvalCase.meta`，指标计算仍按二元相关度（见 [docs/datasets.md](docs/datasets.md) 当前限制）
+- **Recall/MRR/MAP 仍按二元相关度**：分级相关度标注（`grades` 0/1/2）已进入排序指标——评测集带 `grades` 时自动产出 Weighted NDCG@10（指数增益 2^g − 1，含 bootstrap 置信区间，见 [docs/datasets.md](docs/datasets.md) 与 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)）；但 Recall/MRR/MAP 与二元 NDCG@10 仍按二元相关度口径计算，分级信息不参与这些指标。无 `grades` 的评测集不产出 Weighted NDCG@10（报告显示 —，门禁报不可用），不做 0 值冒充
 - **JSONL 评测集通道暂无参考答案字段**：`--dataset` 跑的评测中 LLM-as-judge 段会静默跳过（judge 需要参考答案）；CLI `--dataset` 的语料亦为内置玩具语料，外部语料 + 人工标注集的组合请走库接口（`load_corpus_from_dir` + `load_dataset` + `run_evaluation`）
 - **bootstrap 置信区间在极小评测集上不可靠**：非参数百分位 bootstrap 在样本数很小（如 n<10）时覆盖率不足、区间偏窄，n=1 时退化为点估计；demo 规模（24 条）下的区间仅作不确定性参考，不构成统计学推断
 - **OpenAICompatibleJudge 的真实服务验证范围**：已于 2026-10-02 对阿里云 DashScope（qwen-turbo，OpenAI 兼容模式）完成真实端到端调用，四维评分与 rationale 解析正确（见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)）；HTTP 层另有本地真实 socket 集成测试（`tests/test_judge_real_http.py`）。OpenAI 官方端点与其他 provider 未实测；仓库测试套件保持全离线，真实冒烟测试默认跳过（设 `EVAL_REAL_LLM_SMOKE=1` 与端点环境变量后可复验）

@@ -6,9 +6,11 @@ from llm_eval_kit.metrics import (
     ConfidenceInterval,
     average_precision,
     bootstrap_ci,
+    dcg_at_k,
     latency_stats,
     mrr,
     ndcg_at_k,
+    ndcg_at_k_weighted,
     percentile,
     recall_at_k,
 )
@@ -77,6 +79,81 @@ class TestNDCGAtK:
     def test_k_smaller_than_relevant_count(self):
         value = ndcg_at_k(["a", "b", "x"], {"a", "b", "c"}, 2)
         assert value == pytest.approx(1.0)
+
+
+class TestDCGAtK:
+    def test_hand_computed_exponential_gains(self):
+        # gains [2,1,0] → 3/log2(2) + 1/log2(3) + 0/log2(4)
+        assert dcg_at_k([2, 1, 0], 3) == pytest.approx(3 + 1 / math.log2(3))
+
+    def test_zero_gain_contributes_nothing(self):
+        assert dcg_at_k([2, 1, 0], 2) == pytest.approx(3 + 1 / math.log2(3))
+
+    def test_k_truncates_positions(self):
+        # 增益 3 = 2^3 - 1，只取第 1 位
+        assert dcg_at_k([3, 2, 1], 1) == pytest.approx(7.0)
+
+    def test_position_discount(self):
+        # 高增益排后：3/log2(3)
+        assert dcg_at_k([0, 2], 2) == pytest.approx(3 / math.log2(3))
+
+    def test_empty_gains(self):
+        assert dcg_at_k([], 5) == 0.0
+
+    def test_invalid_k_raises(self):
+        with pytest.raises(ValueError):
+            dcg_at_k([1], 0)
+
+
+class TestNDCGWeighted:
+    GRADES = {"a": 2, "b": 1, "c": 0}
+
+    def test_perfect_ordering_is_one(self):
+        # 按增益降序 a(3) > b(1) > c(0) 排列，DCG == IDCG
+        assert ndcg_at_k_weighted(["a", "b", "c"], {"a", "b", "c"}, self.GRADES, 3) == pytest.approx(1.0)
+
+    def test_hand_computed_imperfect_order(self):
+        # ranked [b,a]：DCG = 1/log2(2) + 3/log2(3)；IDCG = 3/log2(2) + 1/log2(3)
+        value = ndcg_at_k_weighted(["b", "a"], {"a", "b"}, {"a": 2, "b": 1}, 2)
+        expected = (1 + 3 / math.log2(3)) / (3 + 1 / math.log2(3))
+        assert value == pytest.approx(expected)
+        assert 0.79 < value < 0.80
+
+    def test_higher_grade_should_rank_first(self):
+        good = ndcg_at_k_weighted(["a", "b"], {"a", "b"}, {"a": 2, "b": 1}, 2)
+        bad = ndcg_at_k_weighted(["b", "a"], {"a", "b"}, {"a": 2, "b": 1}, 2)
+        assert good == pytest.approx(1.0)
+        assert bad < good
+
+    def test_ideal_dcg_sorts_all_gains_not_document_order(self):
+        # K=1 时理想 DCG 取全部增益排序后的第 1 位（b 的增益 3），而非排首位的 a（增益 1）
+        value = ndcg_at_k_weighted(["a", "b"], {"a", "b"}, {"a": 1, "b": 2}, 1)
+        assert value == pytest.approx(1 / 3)
+
+    def test_ungraded_relevant_defaults_to_gain_one(self):
+        # b 未标注分级 → 增益 1，与显式标 b:1 同值
+        value = ndcg_at_k_weighted(["b", "a"], {"a", "b"}, {"a": 2}, 2)
+        expected = (1 + 3 / math.log2(3)) / (3 + 1 / math.log2(3))
+        assert value == pytest.approx(expected)
+
+    def test_empty_grades_reduces_to_binary_ndcg(self):
+        ranked, rel = ["x", "a", "b"], {"a", "b"}
+        assert ndcg_at_k_weighted(ranked, rel, {}, 10) == pytest.approx(ndcg_at_k(ranked, rel, 10))
+        assert ndcg_at_k_weighted(ranked, rel, None, 10) == pytest.approx(ndcg_at_k(ranked, rel, 10))
+
+    def test_grade_zero_doc_contributes_nothing(self):
+        # 只标了 grade 0 → 全部增益为 0，IDCG 为 0，返回 0
+        assert ndcg_at_k_weighted(["a"], {"a"}, {"a": 0}, 10) == 0.0
+
+    def test_relevant_beyond_k_ignored(self):
+        assert ndcg_at_k_weighted(["x", "a"], {"a"}, {"a": 2}, 1) == 0.0
+
+    def test_empty_relevant_returns_zero(self):
+        assert ndcg_at_k_weighted(["a"], set(), {"a": 2}, 10) == 0.0
+
+    def test_result_bounded_in_unit_interval(self):
+        value = ndcg_at_k_weighted(["x", "y", "a"], {"a"}, {"a": 2}, 10)
+        assert 0.0 < value <= 1.0
 
 
 class TestPercentile:

@@ -140,23 +140,38 @@ def run_demo(
 
 
 def print_summary(data: ReportData) -> None:
-    """把报告数据打印成控制台摘要（demo 输出）。"""
+    """把报告数据打印成控制台摘要（demo 输出）。
+
+    Weighted NDCG@10 列只在评测集带 grades 分级标注时出现（如 --dataset 评测集）；
+    内置玩具 demo 无 grades，控制台输出与既往完全一致。
+    """
     print("== llm-eval-kit demo ==")
     print(f"语料文档数: {data.corpus_size}  评测集规模: {data.eval_size}  top-K: {data.top_k}")
     ks = data.pipelines[0].ks if data.pipelines else ()
+    show_weighted = any(p.weighted_ndcg is not None for p in data.pipelines)
     header = (
         "管线".ljust(8)
         + "".join(f"Recall@{k}".ljust(12) for k in ks)
         + "MRR".ljust(8)
         + "MAP@10".ljust(8)
         + "NDCG@10".ljust(10)
+        + ("Weighted NDCG@10".ljust(18) if show_weighted else "")
         + "P50(ms)".ljust(10)
     )
     print(header)
     for metrics in data.pipelines:
         row = metrics.name.ljust(8)
         row += "".join(f"{metrics.recall.get(k, 0.0):<12.4f}" for k in ks)
-        row += f"{metrics.mrr:<8.4f}{metrics.map:<8.4f}{metrics.ndcg:<10.4f}{metrics.latency.p50:<10.3f}"
+        weighted_cell = (
+            f"{metrics.weighted_ndcg:<18.4f}"
+            if metrics.weighted_ndcg is not None
+            else "—".ljust(18)
+        )
+        row += (
+            f"{metrics.mrr:<8.4f}{metrics.map:<8.4f}{metrics.ndcg:<10.4f}"
+            + (weighted_cell if show_weighted else "")
+            + f"{metrics.latency.p50:<10.3f}"
+        )
         print(row)
     if data.attribution:
         primary_name = next(iter(data.attribution))

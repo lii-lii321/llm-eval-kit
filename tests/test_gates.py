@@ -84,6 +84,26 @@ class TestMetricValue:
         for expected in ("recall_at_1", "recall_at_10", "mrr", "map", "map_at_10", "ndcg", "ndcg_at_10", "hit_rate"):
             assert expected in names
 
+    def test_weighted_ndcg_value_and_aliases(self):
+        metrics = _metrics()
+        metrics.weighted_ndcg = 0.66
+        assert metric_value(metrics, "weighted_ndcg") == 0.66
+        assert metric_value(metrics, "weighted_ndcg_at_10") == 0.66
+
+    def test_weighted_ndcg_unavailable_raises_not_zero(self):
+        # 评测集无 grades 时 weighted_ndcg 为 None：报错说明不可用，而非按 0 判定
+        with pytest.raises(ValueError) as excinfo:
+            metric_value(_metrics(), "weighted_ndcg_at_10")
+        message = str(excinfo.value)
+        assert "weighted_ndcg_at_10" in message
+        assert "grades" in message
+        assert "不可用" in message
+
+    def test_supported_names_include_weighted_ndcg(self):
+        names = supported_metric_names((1, 3, 5, 10))
+        assert "weighted_ndcg" in names
+        assert "weighted_ndcg_at_10" in names
+
 
 class TestEvaluateGates:
     def test_all_pass_returns_empty(self):
@@ -153,6 +173,17 @@ class TestCliGate:
         ])
         assert rc == 2
         assert "precision_at_5" in capsys.readouterr().err
+
+    def test_weighted_ndcg_gate_without_grades_exits_two(self, tmp_path, capsys):
+        # demo（合成评测集）无 grades：weighted_ndcg 门禁报不可用，退出码 2
+        rc = main([
+            "demo", "--out", str(tmp_path), "--num-cases", "6",
+            "--fail-under", "weighted_ndcg_at_10=0.5",
+        ])
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "weighted_ndcg_at_10" in err
+        assert "不可用" in err
 
     def test_no_gate_keeps_default_behavior(self, tmp_path, capsys):
         rc = main(["demo", "--out", str(tmp_path), "--num-cases", "6"])

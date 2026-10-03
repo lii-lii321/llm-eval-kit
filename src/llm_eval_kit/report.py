@@ -50,10 +50,34 @@ def _fmt_metric(value: float, ci: ConfidenceInterval | None) -> str:
     return f"{_fmt(value)} [{_fmt(ci.low)}, {_fmt(ci.high)}]"
 
 
+def _fmt_weighted(metrics: PipelineMetrics) -> str:
+    """渲染 Weighted NDCG@10 单元格：评测集无 grades 时显示 —（不冒充 0）。"""
+    if metrics.weighted_ndcg is None:
+        return "—"
+    return _fmt_metric(metrics.weighted_ndcg, metrics.weighted_ndcg_ci)
+
+
+def _weighted_note(data: ReportData) -> str | None:
+    """Weighted NDCG@10 列的状态说明：有分级标注讲口径，无分级标注讲降级。"""
+    if not any(p.weighted_ndcg is not None for p in data.pipelines):
+        return "Weighted NDCG@10 未计算（显示 —）：本次评测集未提供 grades 分级标注，不输出 0 冒充可用。"
+    return (
+        "Weighted NDCG@10 为分级相关度指标（指数增益 2^g − 1，按 grades 计算，"
+        "理想 DCG 用全部相关文档增益排序）；查询未标注分级的文档按增益 1（二元口径）计入。"
+    )
+
+
 def _ci_legend(data: ReportData) -> ConfidenceInterval | None:
     """取报告里第一个出现的置信区间，用于渲染图例；没有则返回 None。"""
     for p in data.pipelines:
-        for ci in (p.mrr_ci, p.map_ci, p.ndcg_ci, p.hit_rate_ci, *p.recall_ci.values()):
+        for ci in (
+            p.mrr_ci,
+            p.map_ci,
+            p.ndcg_ci,
+            p.weighted_ndcg_ci,
+            p.hit_rate_ci,
+            *p.recall_ci.values(),
+        ):
             if ci is not None:
                 return ci
     return None
@@ -74,10 +98,10 @@ def render_markdown(data: ReportData) -> str:
         lines.append("")
         header = (
             "| 管线 | " + " | ".join(f"Recall@{k}" for k in ks)
-            + " | MRR | MAP@10 | NDCG@10 | 命中率 | P50(ms) | P95(ms) |"
+            + " | MRR | MAP@10 | NDCG@10 | Weighted NDCG@10 | 命中率 | P50(ms) | P95(ms) |"
         )
         lines.append(header)
-        lines.append("|" + "---|" * (len(ks) + 7))
+        lines.append("|" + "---|" * (len(ks) + 8))
         for p in data.pipelines:
             cells = [p.name] + [
                 _fmt_metric(p.recall.get(k, 0.0), p.recall_ci.get(k)) for k in ks
@@ -86,6 +110,7 @@ def render_markdown(data: ReportData) -> str:
                 _fmt_metric(p.mrr, p.mrr_ci),
                 _fmt_metric(p.map, p.map_ci),
                 _fmt_metric(p.ndcg, p.ndcg_ci),
+                _fmt_weighted(p),
                 _fmt_metric(p.hit_rate, p.hit_rate_ci),
                 _fmt_ms(p.latency.p50),
                 _fmt_ms(p.latency.p95),
@@ -97,6 +122,9 @@ def render_markdown(data: ReportData) -> str:
             lines.append(
                 f"> 方括号内为 bootstrap 置信区间（百分位法，置信水平 {ci.level:.0%}，重采样 {ci.n_boot} 次）。"
             )
+        weighted_note = _weighted_note(data)
+        if weighted_note is not None:
+            lines.append(f"> {weighted_note}")
         lines.append("")
 
     lines.append("## badcase 归因")
@@ -186,7 +214,10 @@ def render_html(data: ReportData) -> str:
 
     if data.pipelines:
         ks = data.primary.ks
-        headers = ["管线"] + [f"Recall@{k}" for k in ks] + ["MRR", "MAP@10", "NDCG@10", "命中率", "P50(ms)", "P95(ms)"]
+        headers = (
+            ["管线"] + [f"Recall@{k}" for k in ks]
+            + ["MRR", "MAP@10", "NDCG@10", "Weighted NDCG@10", "命中率", "P50(ms)", "P95(ms)"]
+        )
         rows = []
         for p in data.pipelines:
             cells = [p.name] + [
@@ -196,6 +227,7 @@ def render_html(data: ReportData) -> str:
                 _fmt_metric(p.mrr, p.mrr_ci),
                 _fmt_metric(p.map, p.map_ci),
                 _fmt_metric(p.ndcg, p.ndcg_ci),
+                _fmt_weighted(p),
                 _fmt_metric(p.hit_rate, p.hit_rate_ci),
                 _fmt_ms(p.latency.p50),
                 _fmt_ms(p.latency.p95),
@@ -208,6 +240,9 @@ def render_html(data: ReportData) -> str:
                 f'<p class="note">方括号内为 bootstrap 置信区间'
                 f"（百分位法，置信水平 {ci.level:.0%}，重采样 {ci.n_boot} 次）。</p>"
             )
+        weighted_note = _weighted_note(data)
+        if weighted_note is not None:
+            table += f'<p class="note">{html_mod.escape(weighted_note)}</p>'
         sections.append("<h2>检索指标</h2>" + table)
 
     if data.attribution:

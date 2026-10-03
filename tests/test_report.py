@@ -1,6 +1,6 @@
 from llm_eval_kit.attribution import REASON_KEYWORD_MISMATCH, Badcase
 from llm_eval_kit.judge import DIMENSIONS, JudgeSummary
-from llm_eval_kit.metrics import LatencyStats, PipelineMetrics
+from llm_eval_kit.metrics import ConfidenceInterval, LatencyStats, PipelineMetrics
 from llm_eval_kit.report import ReportData, render_html, render_markdown, write_reports
 
 
@@ -118,3 +118,36 @@ class TestWriteReports:
         out = tmp_path / "nested" / "reports"
         md_path, html_path = write_reports(make_report(), out)
         assert md_path.exists() and html_path.exists()
+
+
+class TestWeightedNDCGColumn:
+    """Weighted NDCG@10 列：无 grades 显示 —（诚实降级），有 grades 出数值与口径说明。"""
+
+    def test_markdown_unavailable_renders_dash_and_note(self):
+        md = render_markdown(make_report())
+        assert "Weighted NDCG@10" in md
+        metrics_section = md.split("## 检索指标")[1].split("##")[0]
+        assert "| — |" in metrics_section
+        assert "未提供 grades 分级标注" in metrics_section
+        assert "不输出 0 冒充" in metrics_section
+
+    def test_markdown_available_renders_value_with_ci_and_graded_note(self):
+        data = make_report()
+        data.pipelines[0].weighted_ndcg = 0.8
+        data.pipelines[0].weighted_ndcg_ci = ConfidenceInterval(low=0.7, high=0.9)
+        md = render_markdown(data)
+        assert "0.8000 [0.7000, 0.9000]" in md
+        assert "分级相关度指标" in md
+
+    def test_html_unavailable_renders_dash(self):
+        html = render_html(make_report())
+        assert "Weighted NDCG@10" in html
+        assert "<td>—</td>" in html
+        assert "未提供 grades 分级标注" in html
+
+    def test_html_available_renders_value(self):
+        data = make_report()
+        data.pipelines[0].weighted_ndcg = 0.8
+        html = render_html(data)
+        assert "<td>0.8000</td>" in html
+        assert "分级相关度指标" in html

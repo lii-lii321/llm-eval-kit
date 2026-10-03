@@ -16,6 +16,7 @@ from .metrics import (
     latency_stats,
     mrr,
     ndcg_at_k,
+    ndcg_at_k_weighted,
     recall_at_k,
 )
 from .report import ReportData
@@ -57,10 +58,14 @@ def _build_metrics(
     """基于已收集的检索结果聚合指标（不做任何检索），并给出 bootstrap 置信区间。"""
     ranked_ids = {qid: [r.doc_id for r in results] for qid, results in ranked.items()}
     n = len(cases) or 1
+    # 评测集任一查询带 grades 分级标注时才产出 Weighted NDCG@10；纯二元评测集
+    # 保持 None（诚实降级），不输出 0 冒充可用
+    has_grades = any(case.meta.get("grades") for case in cases)
     per_query_recall: dict[int, list[float]] = {k: [] for k in ks}
     per_query_mrr: list[float] = []
     per_query_map: list[float] = []
     per_query_ndcg: list[float] = []
+    per_query_weighted_ndcg: list[float] = []
     per_query_hit: list[float] = []
     for case in cases:
         ids = ranked_ids[case.qid]
@@ -70,6 +75,9 @@ def _build_metrics(
         per_query_mrr.append(mrr(ids, rel))
         per_query_map.append(average_precision(ids, rel, 10))
         per_query_ndcg.append(ndcg_at_k(ids, rel, 10))
+        if has_grades:
+            grades = case.meta.get("grades") or {}
+            per_query_weighted_ndcg.append(ndcg_at_k_weighted(ids, rel, grades, 10))
         per_query_hit.append(1.0 if rel & set(ids[:top_k]) else 0.0)
 
     metrics = PipelineMetrics(name=name, ks=tuple(ks))
@@ -79,6 +87,8 @@ def _build_metrics(
     metrics.map = sum(per_query_map) / n
     metrics.ndcg = sum(per_query_ndcg) / n
     metrics.hit_rate = sum(per_query_hit) / n
+    if has_grades:
+        metrics.weighted_ndcg = sum(per_query_weighted_ndcg) / n
     if cases and n_boot > 0:
         metrics.recall_ci = {
             k: bootstrap_ci(per_query_recall[k], n_boot=n_boot, confidence=confidence, seed=seed)
@@ -87,6 +97,10 @@ def _build_metrics(
         metrics.mrr_ci = bootstrap_ci(per_query_mrr, n_boot=n_boot, confidence=confidence, seed=seed)
         metrics.map_ci = bootstrap_ci(per_query_map, n_boot=n_boot, confidence=confidence, seed=seed)
         metrics.ndcg_ci = bootstrap_ci(per_query_ndcg, n_boot=n_boot, confidence=confidence, seed=seed)
+        if has_grades:
+            metrics.weighted_ndcg_ci = bootstrap_ci(
+                per_query_weighted_ndcg, n_boot=n_boot, confidence=confidence, seed=seed
+            )
         metrics.hit_rate_ci = bootstrap_ci(per_query_hit, n_boot=n_boot, confidence=confidence, seed=seed)
     metrics.latency = latency_stats(durations_ms)
     return metrics
@@ -106,6 +120,8 @@ def run_retrieval(
 
     - retriever 可以是内置 BaseRetriever，也可以是任何满足 Retriever 协议的
       外部对象（见 adapters.py 与 docs/ADAPTERS.md），内部自动适配；
+    - 评测集任一查询的 meta 带 grades（分级相关度）时，额外产出 Weighted NDCG@10
+      （weighted_ndcg，指数增益 2^g − 1）；无 grades 时该指标保持 None，不做 0 值冒充；
     - seed/n_boot/confidence 控制 bootstrap 重采样；n_boot=0 关闭置信区间；
     - 固定 seed 保证区间可复现。
     """

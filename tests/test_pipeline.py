@@ -1,3 +1,6 @@
+import math
+from pathlib import Path
+
 import pytest
 
 from llm_eval_kit.judge import LLMUnavailable, MockJudge
@@ -5,6 +8,21 @@ from llm_eval_kit.pipeline import run_evaluation, run_retrieval
 from llm_eval_kit.report import render_markdown
 from llm_eval_kit.retrieval import BM25Retriever, TFRetriever
 from llm_eval_kit.synth import EvalCase, generate_eval_set
+
+EXAMPLES_DATASET = Path(__file__).resolve().parent.parent / "examples" / "dataset_demo.jsonl"
+
+
+class StaticRetriever:
+    """固定排序的假检索器：{query: [doc_id, ...]}，用于逐位核对聚合口径。"""
+
+    name = "static"
+
+    def __init__(self, rankings: dict[str, list[str]]):
+        self._rankings = rankings
+        self.doc_texts = {doc_id: f"文本 {doc_id}" for ids in rankings.values() for doc_id in ids}
+
+    def retrieve(self, query: str, top_k: int = 10) -> list[str]:
+        return self._rankings[query][:top_k]
 
 
 class BadJudge:
@@ -130,6 +148,99 @@ class TestRunEvaluation:
         md = render_markdown(data)
         assert "## 检索指标" in md
         assert "badcase" in md
+
+
+class TestWeightedNDCG:
+    """分级相关度 Weighted NDCG@10：聚合口径、诚实降级与置信区间。"""
+
+    @staticmethod
+    def _graded_cases() -> list[EvalCase]:
+        return [
+            EvalCase(qid="q1", query="高分级文档查询", relevant_ids=["a"], meta={"grades": {"a": 2}}),
+            EvalCase(qid="q2", query="无分级查询", relevant_ids=["a"], meta={}),
+        ]
+
+    _RANKINGS = {"高分级文档查询": ["b", "a"], "无分级查询": ["a"]}
+
+    def test_hand_computed_aggregation(self):
+        # q1 ranked [b,a]：DCG = 3/log2(3)（a 增益 3 在第 2 位），IDCG = 3 → 1/log2(3)
+        # q2 无 grades：a 按增益 1 计入且排首位 → 1.0；聚合为两者均值
+        retriever = StaticRetriever(self._RANKINGS)
+        metrics = run_retrieval(self._graded_cases(), retriever, top_k=3)
+        expected = (1 / math.log2(3) + 1.0) / 2
+        assert metrics.weighted_ndcg == pytest.approx(expected)
+
+    def test_grade_zero_doc_differs_from_binary_ndcg(self):
+        # b 显式标 0：加权口径下无增益（≈0.63），二元口径下 b 仍算命中（=1.0）
+        cases = [
+            EvalCase(qid="q1", query="边界文档查询", relevant_ids=["a", "b"], meta={"grades": {"a": 2, "b": 0}})
+        ]
+        retriever = StaticRetriever({"边界文档查询": ["b", "a"]})
+        metrics = run_retrieval(cases, retriever, top_k=3)
+        assert metrics.weighted_ndcg == pytest.approx(1 / math.log2(3))
+        assert metrics.ndcg == pytest.approx(1.0)
+
+    def test_no_grades_honest_degradation(self, toy_docs):
+        cases = [EvalCase(qid="q1", query="BM25 词频", relevant_ids=["d01"])]
+        metrics = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3)
+        assert metrics.weighted_ndcg is None
+        assert metrics.weighted_ndcg_ci is None
+        assert metrics.ndcg == 1.0  # 二元指标不受影响
+
+    def test_empty_grades_dict_also_degrades(self, toy_docs):
+        cases = [EvalCase(qid="q1", query="BM25 词频", relevant_ids=["d01"], meta={"grades": {}})]
+        metrics = run_retrieval(cases, BM25Retriever(toy_docs), top_k=3)
+        assert metrics.weighted_ndcg is None
+
+    def test_mixed_dataset_falls_back_to_binary_gain_per_query(self):
+        # 只有部分查询带 grades 时仍产出指标；不带分级的查询按增益 1 计入
+        # q1 ranked [b,a] 加权 1/log2(3)；q2 无分级、a 排首位 → 1.0
+        retriever = StaticRetriever(self._RANKINGS)
+        metrics = run_retrieval(self._graded_cases(), retriever, top_k=3)
+        assert metrics.weighted_ndcg == pytest.approx((1 / math.log2(3) + 1.0) / 2)
+
+    def test_ci_populated_reproducible_and_bounded(self):
+        retriever = StaticRetriever(self._RANKINGS)
+        first = run_retrieval(self._graded_cases(), retriever, top_k=3, seed=9)
+        second = run_retrieval(self._graded_cases(), retriever, top_k=3, seed=9)
+        assert first.weighted_ndcg_ci is not None
+        assert first.weighted_ndcg_ci == second.weighted_ndcg_ci
+        assert 0.0 <= first.weighted_ndcg_ci.low <= first.weighted_ndcg_ci.high <= 1.0
+
+    def test_n_boot_zero_disables_only_ci(self):
+        retriever = StaticRetriever(self._RANKINGS)
+        metrics = run_retrieval(self._graded_cases(), retriever, top_k=3, n_boot=0)
+        assert metrics.weighted_ndcg is not None
+        assert metrics.weighted_ndcg_ci is None
+
+    def test_run_evaluation_with_grades_renders_value(self):
+        data = run_evaluation(
+            self._graded_cases(),
+            {"static": StaticRetriever(self._RANKINGS)},
+            top_k=3,
+        )
+        assert data.primary.weighted_ndcg is not None
+        md = render_markdown(data)
+        assert "Weighted NDCG@10" in md
+        assert "分级相关度指标" in md
+
+    def test_run_evaluation_without_grades_renders_dash(self, toy_docs):
+        cases = generate_eval_set(toy_docs, num_cases=3, seed=5)
+        data = run_evaluation(cases, {"bm25": BM25Retriever(toy_docs)}, top_k=3)
+        assert data.primary.weighted_ndcg is None
+        metrics_section = render_markdown(data).split("## 检索指标")[1].split("##")[0]
+        assert "| — |" in metrics_section
+        assert "未提供 grades 分级标注" in metrics_section
+
+    def test_dataset_demo_end_to_end_produces_metric(self):
+        from llm_eval_kit.dataset import load_dataset
+        from llm_eval_kit.demo import build_demo_corpus
+
+        cases = load_dataset(EXAMPLES_DATASET).to_eval_cases()
+        metrics = run_retrieval(cases, BM25Retriever(build_demo_corpus()), top_k=10)
+        assert metrics.weighted_ndcg is not None
+        assert 0.0 < metrics.weighted_ndcg <= 1.0
+        assert metrics.weighted_ndcg_ci is not None
 
 
 class TestBootstrapConfidence:

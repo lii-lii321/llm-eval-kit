@@ -1,11 +1,13 @@
-"""检索评测指标：Recall@K、MRR、MAP@10、NDCG@10、bootstrap 置信区间与延迟分位数统计。
+"""检索评测指标：Recall@K、MRR、MAP@10、NDCG@10、加权 NDCG（分级相关度）、bootstrap 置信区间与延迟分位数统计。
 
-相关度采用二元定义（命中/未命中），NDCG 因此是 binary NDCG。
+Recall/MRR/MAP 与 NDCG@10 采用二元相关度定义（命中/未命中）；
+评测集提供 grades 分级标注（0/1/2）时，另算 Weighted NDCG@10
+（指数增益 2^g − 1，见 ``ndcg_at_k_weighted``）。
 """
 
 import math
 import random
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 
@@ -36,6 +38,47 @@ def ndcg_at_k(ranked: Sequence[str], relevant: Iterable[str], k: int = 10) -> fl
     dcg = sum(1.0 / math.log2(i + 2) for i, doc_id in enumerate(ranked[:k]) if doc_id in rel)
     ideal_hits = min(len(rel), k)
     idcg = sum(1.0 / math.log2(i + 2) for i in range(ideal_hits))
+    return dcg / idcg if idcg else 0.0
+
+
+def dcg_at_k(gains: Sequence[float], k: int) -> float:
+    """DCG@K：标准指数增益，按位置折损累加（位置 i 从 0 起，折损 log2(i+2)）。
+
+    输入是按展示顺序排列的分级相关度取值（如 0/1/2），增益变换 2^g − 1 在函数内完成。
+    """
+    if k <= 0:
+        raise ValueError("k 必须为正整数")
+    return sum((2.0**g - 1.0) / math.log2(i + 2) for i, g in enumerate(gains[:k]))
+
+
+def ndcg_at_k_weighted(
+    ranked: Sequence[str],
+    relevant: Iterable[str],
+    grades: Mapping[str, int] | None = None,
+    k: int = 10,
+) -> float:
+    """加权 NDCG@K：分级相关度版本，增益 2^g − 1 随位置折损。
+
+    - ``relevant`` 定义相关文档全集；``grades`` 是 {doc_id: 0|1|2} 的分级标注；
+    - 相关文档未标注分级时按增益 1（二元"相关"口径）计入，因此 ``grades``
+      为空时本函数与 ``ndcg_at_k`` 数值一致；
+    - 理想 DCG 由该查询全部相关文档的增益降序取前 K 位构成（而非只看排在前面的文档）；
+    - 无相关文档或全部增益为 0（如只标了 grade 0）时返回 0。
+    """
+    rel = set(relevant)
+    if not rel:
+        return 0.0
+    graded = grades or {}
+
+    def gain(doc_id: str) -> float:
+        if doc_id in graded:
+            return float(graded[doc_id])
+        # 相关文档未标注分级按增益 1（二元口径）；不相关文档增益 0
+        return 1.0 if doc_id in rel else 0.0
+
+    dcg = dcg_at_k([gain(doc_id) for doc_id in ranked[:k]], k)
+    ideal_gains = sorted((gain(doc_id) for doc_id in rel), reverse=True)
+    idcg = dcg_at_k(ideal_gains, k)
     return dcg / idcg if idcg else 0.0
 
 
@@ -157,13 +200,16 @@ class PipelineMetrics:
     recall: dict[int, float] = field(default_factory=dict)
     mrr: float = 0.0
     map: float = 0.0
-    ndcg: float = 0.0  # NDCG@10
+    ndcg: float = 0.0  # NDCG@10（二元相关度）
     hit_rate: float = 0.0  # top-K 内至少命中一条相关文档的查询占比
+    weighted_ndcg: float | None = None  # Weighted NDCG@10（分级相关度）；评测集无 grades 时不计算，保持 None
     recall_ci: dict[int, ConfidenceInterval] = field(default_factory=dict)
     mrr_ci: ConfidenceInterval | None = None
     map_ci: ConfidenceInterval | None = None
     ndcg_ci: ConfidenceInterval | None = None
+    weighted_ndcg_ci: ConfidenceInterval | None = None  # 随 weighted_ndcg 一同产出或为 None
     hit_rate_ci: ConfidenceInterval | None = None
     latency: LatencyStats = field(default_factory=LatencyStats)
     # *_ci：对应聚合指标的 bootstrap 置信区间；评测集为空或关闭重采样时为空/None
     # map / map_ci 是 MAP@10（各查询 AP@10 的均值），与 ndcg 同为 @10 口径
+    # weighted_ndcg 为 None 表示本次评测集未提供分级标注（诚实降级），不要当成 0 使用

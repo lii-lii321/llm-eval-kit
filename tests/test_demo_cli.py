@@ -1,8 +1,12 @@
+from pathlib import Path
+
 import pytest
 
 from llm_eval_kit.cli import main
 from llm_eval_kit.demo import DEMO_DOCS, DEMO_SYNONYMS, ExtractiveAnswerer, build_demo_corpus, run_demo
 from llm_eval_kit.retrieval import BM25Retriever
+
+EXAMPLES_DATASET = Path(__file__).resolve().parent.parent / "examples" / "dataset_demo.jsonl"
 
 
 class TestDemoCorpus:
@@ -92,3 +96,25 @@ class TestCli:
             main(["demo", "--out", str(tmp_path), "--paraphrase-ratio", "1.5"])
         assert excinfo.value.code == 2
         assert "[0, 1]" in capsys.readouterr().err
+
+
+class TestDatasetWeightedNDCG:
+    """--dataset 带 grades 的评测集：weighted NDCG 进入控制台与报告；纯 demo 输出不变。"""
+
+    def test_dataset_with_grades_produces_weighted_ndcg(self, tmp_path, capsys):
+        rc = main(["--dataset", str(EXAMPLES_DATASET), "--out", str(tmp_path)])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Weighted NDCG@10" in out
+        md = (tmp_path / "eval_report.md").read_text(encoding="utf-8")
+        html = (tmp_path / "eval_report.html").read_text(encoding="utf-8")
+        assert "Weighted NDCG@10" in md
+        assert "分级相关度指标" in md
+        assert "Weighted NDCG@10" in html
+        assert "未提供 grades 分级标注" not in md
+
+    def test_demo_console_output_has_no_weighted_column(self, tmp_path, capsys):
+        # 内置玩具 demo 无 grades：控制台不出现 Weighted NDCG@10 列，行为与既往一致
+        rc = main(["demo", "--out", str(tmp_path), "--num-cases", "6"])
+        assert rc == 0
+        assert "Weighted NDCG@10" not in capsys.readouterr().out

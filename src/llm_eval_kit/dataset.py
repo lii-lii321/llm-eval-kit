@@ -9,8 +9,9 @@
 - 任何格式/内容问题抛 DatasetError，错误信息带行号。
 
 设计取舍：仓库核心零第三方依赖，故用 dataclass + 手写校验而非 pydantic。
-分级相关度 grades 目前只做格式校验并透传（存入 EvalCase.meta），
-指标计算仍按二元相关度——见 README 已知限制。
+分级相关度 grades 校验后透传（存入 EvalCase.meta）：评测集任一查询带 grades 时，
+管线自动产出分级相关度 Weighted NDCG@10（见 metrics.ndcg_at_k_weighted）；
+Recall/MRR/MAP 仍按二元相关度——见 README 已知限制。
 """
 
 from __future__ import annotations
