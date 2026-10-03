@@ -13,6 +13,7 @@
 ## 功能特性
 
 - **合成评测集生成**：从纯文本文档/题库构造 query-doc-answer 三元组。规则式生成器（词频 × 逆文档频率选关键词 + 查询模板），不依赖真实 LLM，固定 seed 完全可复现；支持同义改写构造词面不匹配的困难样本
+- **评测数据集管理（JSONL）**：人工标注查询集的加载/校验/评测通道——`load_dataset` 严格校验（缺字段、重复 query_id、空相关文档等报错均带行号），`_meta` 元信息行记录标注日期/标注人/版本，`DatasetStats` 输出条数与查询长度分布；CLI `--dataset` 从文件读查询批量评测，与 `--fail-under` 门禁组合可用，见 [docs/datasets.md](docs/datasets.md)
 - **检索指标**：Recall@K、MRR、MAP@10、NDCG@10（二元相关度）、命中率与 P50/P95 延迟，聚合指标附 bootstrap 95% 置信区间（固定 seed 完全可复现），支持多路检索管线同台对比
 - **外部检索器接入**：Retriever 协议（duck typing）+ `CallableRetriever` 宽容归一化——任何检索系统（向量库 / Elasticsearch / 自研 RAG）实现一个 `retrieve(query, top_k)` 方法即可同台评测，协议不满足时报可诊断错误，见 [docs/ADAPTERS.md](docs/ADAPTERS.md)
 - **评测回归门禁**：`--fail-under 指标名=阈值`（可多次），任一指标低于阈值进程退出码 1 并输出实测值 vs 阈值 vs 差距，可直接作 CI 合并卡点
@@ -78,6 +79,25 @@ md_path, html_path = write_reports(data, Path("reports"))
 ```
 
 真实 demo 实测数字见下方[「demo 实测指标」](#demo-实测指标)与 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)。
+
+### 用人工标注的评测集跑评测
+
+除了规则合成，评测查询也可以来自 JSONL 数据集文件（格式规范与人工标注指南见
+[docs/datasets.md](docs/datasets.md)，种子示例 [`examples/dataset_demo.jsonl`](examples/dataset_demo.jsonl)
+为合成 demo 数据）：
+
+```bash
+python -m llm_eval_kit.cli --dataset examples/dataset_demo.jsonl --out reports \
+  --fail-under recall_at_5=0.5
+```
+
+```python
+from llm_eval_kit import load_dataset
+
+dataset = load_dataset("my_annotations.jsonl")   # 严格校验，错误带行号
+print(dataset.stats().describe())                # 条数 / 平均相关文档数 / 查询长度分布
+cases = dataset.to_eval_cases()                  # 直接喂给 run_evaluation
+```
 
 ### 接入外部检索器
 
@@ -182,6 +202,7 @@ badcase 归因：关键词不匹配 1 条（改写样本「什么是梦话？」
 src/llm_eval_kit/
 ├── tokenize.py      # 中英混合分词（ASCII 词元 + CJK 字符二元组）
 ├── corpus.py        # Doc 数据结构、纯文本文档加载与切块
+├── dataset.py       # JSONL 评测集加载/校验/统计（人工标注集通道）
 ├── synth.py         # 规则式合成评测集生成器
 ├── retrieval.py     # BM25 / 词频 / 混合检索器
 ├── adapters.py      # Retriever 协议、CallableRetriever 与外部检索器适配
@@ -193,18 +214,21 @@ src/llm_eval_kit/
 ├── pipeline.py      # 端到端评测管线（多管线对比）
 ├── demo.py          # 玩具语料与 demo 编排
 └── cli.py           # 命令行入口
-tests/               # 249 个离线测试，零网络依赖
+examples/dataset_demo.jsonl  # 合成 demo 评测集（非人工标注）
+tests/               # 290 个离线测试，零网络依赖
 docs/PERFORMANCE.md  # demo 实测性能报告
 docs/ADAPTERS.md     # 外部检索器接入指南（含 Math_Tutor_RAG 适配示例）
+docs/datasets.md     # 评测数据集格式规范与人工标注指南
 ```
 
 ## 已知限制
 
-- **合成查询偏词面化**：规则生成器基于词面统计，无语义理解；长中文串按虚词切分 + 截断到 6 字，可能产出「常见维度有正」这类不自然查询。生产建议用 LLM 合成或真实查询日志
+- **合成查询偏词面化**：规则生成器基于词面统计，无语义理解；长中文串按虚词切分 + 截断到 6 字，可能产出「常见维度有正」这类不自然查询。评测查询不再只有合成一条路——人工标注查询集现已支持（`--dataset` / `load_dataset`，见 [docs/datasets.md](docs/datasets.md)），生产级合成建议用 LLM 合成或真实查询日志
 - **中文分词是字符二元组近似**：不是真正的中文分词，跨词二元组（如「索评」）会引入噪声；对检索效果敏感的场景建议接 jieba 或真实向量检索
 - **检索器是单机玩具实现**：BM25/TF 为纯 Python 教学实现，适合几百块以内的语料，未做性能优化；得分为 0（零词面重叠）的文档不返回结果
 - **外部检索器的 badcase 归因依赖 doc_texts**：外部检索器不提供 doc_id → 原文映射时，归因会把所有未命中归为"语料缺失"，与真实失败机理可能不符（机制与建议见 [docs/ADAPTERS.md](docs/ADAPTERS.md)）；显式传入 `doc_texts` 可获得正确归因
-- **NDCG 使用二元相关度**：不支持分级相关度标注（graded relevance）
+- **NDCG 使用二元相关度**：不支持分级相关度标注（graded relevance）。JSONL 评测集的 `grades` 字段（0/1/2）目前只做格式校验并透传进 `EvalCase.meta`，指标计算仍按二元相关度（见 [docs/datasets.md](docs/datasets.md) 当前限制）
+- **JSONL 评测集通道暂无参考答案字段**：`--dataset` 跑的评测中 LLM-as-judge 段会静默跳过（judge 需要参考答案）；CLI `--dataset` 的语料亦为内置玩具语料，外部语料 + 人工标注集的组合请走库接口（`load_corpus_from_dir` + `load_dataset` + `run_evaluation`）
 - **bootstrap 置信区间在极小评测集上不可靠**：非参数百分位 bootstrap 在样本数很小（如 n<10）时覆盖率不足、区间偏窄，n=1 时退化为点估计；demo 规模（24 条）下的区间仅作不确定性参考，不构成统计学推断
 - **OpenAICompatibleJudge 的真实服务验证范围**：已于 2026-10-02 对阿里云 DashScope（qwen-turbo，OpenAI 兼容模式）完成真实端到端调用，四维评分与 rationale 解析正确（见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)）；HTTP 层另有本地真实 socket 集成测试（`tests/test_judge_real_http.py`）。OpenAI 官方端点与其他 provider 未实测；仓库测试套件保持全离线，真实冒烟测试默认跳过（设 `EVAL_REAL_LLM_SMOKE=1` 与端点环境变量后可复验）
 - **SSRF 防护只覆盖 URL 字面量**：域名解析后的 IP 不做二次校验（DNS rebinding 不在防护范围）

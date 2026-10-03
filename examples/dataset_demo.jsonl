@@ -1,0 +1,13 @@
+{"_meta": {"corpus": "llm-eval-kit 内置 24 段 RAG/LLM 评测玩具语料（src/llm_eval_kit/demo.py DEMO_DOCS，doc_id d01-d24）", "annotated_at": "2026-10-03", "annotator": "llm-eval-kit 仓库维护者", "version": "0.1.0", "provenance": "synthetic demo, not human-annotated", "license": "MIT"}}
+{"query_id": "q001", "query": "什么是 RAG 检索增强生成？", "relevant_doc_ids": ["d01"]}
+{"query_id": "q002", "query": "有哪些常见的向量数据库引擎？", "relevant_doc_ids": ["d02"]}
+{"query_id": "q003", "query": "BM25 为什么在关键词命中场景仍是强基线？", "relevant_doc_ids": ["d03"]}
+{"query_id": "q004", "query": "选 Embedding 模型时要关注什么？", "relevant_doc_ids": ["d04"]}
+{"query_id": "q005", "query": "混合检索里的 RRF 是做什么的？", "relevant_doc_ids": ["d05"]}
+{"query_id": "q006", "query": "重排序为什么能提升排序质量？", "relevant_doc_ids": ["d06"]}
+{"query_id": "q007", "query": "文档分块有哪些常见策略？", "relevant_doc_ids": ["d07"]}
+{"query_id": "q008", "query": "NDCG 指标有什么特点？", "relevant_doc_ids": ["d08"], "grades": {"d08": 2}}
+{"query_id": "q009", "query": "MRR 适合关注什么质量的评测场景？", "relevant_doc_ids": ["d09"]}
+{"query_id": "q010", "query": "如何缓解大模型的幻觉问题？", "relevant_doc_ids": ["d01", "d12"], "grades": {"d12": 2, "d01": 1}, "notes": "示例性质的多相关文档标注：d12 是幻觉主题文档，d01 讲 RAG 缓解幻觉"}
+{"query_id": "q011", "query": "怎么控制 LLM 应用的 token 成本？", "relevant_doc_ids": ["d23"]}
+{"query_id": "q012", "query": "Recall@5 和 Recall@10 分别衡量什么？", "relevant_doc_ids": ["d10"]}

@@ -15,7 +15,7 @@ from .judge import DIMENSIONS_ZH, JudgeProvider, MockJudge
 from .pipeline import run_evaluation
 from .report import ReportData, write_reports
 from .retrieval import BaseRetriever, BM25Retriever, HybridRetriever, TFRetriever
-from .synth import generate_eval_set
+from .synth import EvalCase, generate_eval_set
 
 # (doc_id, 正文)。刻意让主题词以短中文串开头，规则合成器能提出自然短语。
 DEMO_DOCS: list[tuple[str, str]] = [
@@ -98,20 +98,26 @@ def run_demo(
     num_cases: int = 24,
     paraphrase_ratio: float = 1.0,
     judge: JudgeProvider | None = None,
+    cases: list[EvalCase] | None = None,
+    notes_prefix: list[str] | None = None,
 ) -> ReportData:
     """跑通完整评测闭环并写出报告，返回 ReportData。
 
     paraphrase_ratio=1.0：对所有含改写词典键的查询都尝试改写，
     构造词面不匹配的困难样本，让 badcase 归因链路在 demo 里可见。
+    cases 显式传入时（如 CLI --dataset 从 JSONL 加载的查询集）跳过合成生成，
+    此时 seed/num_cases/paraphrase_ratio 不参与用例构造（seed 仅影响 bootstrap）。
+    notes_prefix 会写进报告 notes 的最前面，用于记录评测集来源与统计。
     """
     docs = build_demo_corpus()
-    cases = generate_eval_set(
-        docs,
-        num_cases=num_cases,
-        seed=seed,
-        paraphrase_ratio=paraphrase_ratio,
-        synonym_map=DEMO_SYNONYMS,
-    )
+    if cases is None:
+        cases = generate_eval_set(
+            docs,
+            num_cases=num_cases,
+            seed=seed,
+            paraphrase_ratio=paraphrase_ratio,
+            synonym_map=DEMO_SYNONYMS,
+        )
     retrievers: dict[str, BaseRetriever] = {
         "bm25": BM25Retriever(docs),
         "tf": TFRetriever(docs),
@@ -126,6 +132,7 @@ def run_demo(
         judge=judge if judge is not None else MockJudge(),
         answers=answers,
     )
+    data.notes.extend(notes_prefix or [])
     data.notes.append("数字由内置 24 段玩具语料实测得出，仅代表 demo 规模，机器与运行环境不同会有差异。")
     md_path, html_path = write_reports(data, out_dir)
     data.notes.append(f"报告已写入：{md_path} 与 {html_path}")

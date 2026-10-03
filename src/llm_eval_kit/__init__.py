@@ -20,6 +20,7 @@ from .attribution import (
     summarize_attribution,
 )
 from .corpus import Doc, load_corpus_from_dir, split_text
+from .dataset import Dataset, DatasetError, DatasetRecord, DatasetStats, load_dataset
 from .judge import (
     DIMENSIONS,
     DIMENSIONS_ZH,
@@ -60,6 +61,10 @@ __all__ = [
     "ConfidenceInterval",
     "DIMENSIONS",
     "DIMENSIONS_ZH",
+    "Dataset",
+    "DatasetError",
+    "DatasetRecord",
+    "DatasetStats",
     "Doc",
     "EvalCase",
     "Hit",
@@ -93,6 +98,7 @@ __all__ = [
     "judge_summary",
     "latency_stats",
     "load_corpus_from_dir",
+    "load_dataset",
     "mrr",
     "ndcg_at_k",
     "normalize_hit",
