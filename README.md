@@ -2,6 +2,8 @@
 
 ![CI](https://github.com/lii-lii321/llm-eval-kit/actions/workflows/ci.yml/badge.svg)
 
+![demo](docs/demo.gif)
+
 🌐 在线评测报告：https://lii-lii321.github.io/llm-eval-kit/ （push 到 main 后由 Pages workflow 自动重新生成发布）
 
 离线可跑的 RAG 检索与 LLM 应用评测工具库：从纯文本文档合成评测集，对比多路检索管线，
