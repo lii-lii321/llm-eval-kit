@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from datetime import datetime
 
+from .adapters import Retriever, as_eval_retriever
 from .attribution import Badcase, attribute_badcases, summarize_attribution
 from .judge import JudgeProvider, JudgeScore, JudgeSummary, LLMJudgeError, judge_summary
 from .metrics import (
@@ -92,7 +94,7 @@ def _build_metrics(
 
 def run_retrieval(
     cases: list[EvalCase],
-    retriever: BaseRetriever,
+    retriever: BaseRetriever | Retriever,
     *,
     top_k: int = 10,
     ks: tuple[int, ...] = (1, 3, 5, 10),
@@ -102,12 +104,15 @@ def run_retrieval(
 ) -> PipelineMetrics:
     """在评测集上运行一条检索管线，返回聚合指标（含 bootstrap 置信区间）与真实计时延迟。
 
+    - retriever 可以是内置 BaseRetriever，也可以是任何满足 Retriever 协议的
+      外部对象（见 adapters.py 与 docs/ADAPTERS.md），内部自动适配；
     - seed/n_boot/confidence 控制 bootstrap 重采样；n_boot=0 关闭置信区间；
     - 固定 seed 保证区间可复现。
     """
-    ranked, durations_ms = _collect_rankings(cases, retriever, top_k)
+    pipeline_retriever = as_eval_retriever(retriever)
+    ranked, durations_ms = _collect_rankings(cases, pipeline_retriever, top_k)
     return _build_metrics(
-        retriever.name,
+        pipeline_retriever.name,
         cases,
         ranked,
         durations_ms,
@@ -121,7 +126,7 @@ def run_retrieval(
 
 def run_evaluation(
     cases: list[EvalCase],
-    retrievers: dict[str, BaseRetriever],
+    retrievers: Mapping[str, BaseRetriever | Retriever],
     *,
     top_k: int = 10,
     ks: tuple[int, ...] = (1, 3, 5, 10),
@@ -133,7 +138,9 @@ def run_evaluation(
 ) -> ReportData:
     """多路检索管线对比评测，产出报告数据。
 
-    - retrievers：管线名 → 检索器，第一个视为主管线（badcase 示例取自主管线）；
+    - retrievers：管线名 → 检索器，第一个视为主管线（badcase 示例取自主管线）。
+      值可以是内置 BaseRetriever，也可以是任何满足 Retriever 协议的外部对象
+      （见 adapters.py 与 docs/ADAPTERS.md），内部自动适配；
     - judge + answers：可选。answers[qid] 是待评系统答案，
       与用例自带的参考答案一起交给裁判评分；裁判不可用时整段优雅跳过；
     - seed/n_boot/confidence 控制 bootstrap 置信区间，n_boot=0 关闭；
@@ -143,10 +150,13 @@ def run_evaluation(
     if not retrievers:
         raise ValueError("至少需要一个检索管线")
     answers = answers or {}
+    eval_retrievers: dict[str, BaseRetriever] = {
+        name: as_eval_retriever(retriever) for name, retriever in retrievers.items()
+    }
 
     pipelines: list[PipelineMetrics] = []
     rankings: dict[str, dict[str, list[RetrievalResult]]] = {}
-    for name, retriever in retrievers.items():
+    for name, retriever in eval_retrievers.items():
         ranked, durations_ms = _collect_rankings(cases, retriever, top_k)
         rankings[name] = ranked
         pipelines.append(
@@ -168,7 +178,7 @@ def run_evaluation(
     for name, ranked in rankings.items():
         ranked_ids = {qid: [r.doc_id for r in results] for qid, results in ranked.items()}
         badcases = attribute_badcases(
-            cases, ranked_ids, retrievers[name].doc_texts, top_k=top_k
+            cases, ranked_ids, eval_retrievers[name].doc_texts, top_k=top_k
         )
         attribution[name] = summarize_attribution(badcases)
         badcases_by_pipeline[name] = badcases
@@ -177,7 +187,7 @@ def run_evaluation(
     if judge is not None:
         primary_name = next(iter(retrievers))
         primary_ranked = rankings[primary_name]
-        texts = retrievers[primary_name].doc_texts
+        texts = eval_retrievers[primary_name].doc_texts
         try:
             scores: list[JudgeScore] = []
             for case in cases:
@@ -200,7 +210,7 @@ def run_evaluation(
     primary_name = next(iter(retrievers))
     return ReportData(
         generated_at=datetime.now().isoformat(timespec="seconds"),
-        corpus_size=len(retrievers[primary_name].doc_texts),
+        corpus_size=len(eval_retrievers[primary_name].doc_texts),
         eval_size=len(cases),
         top_k=top_k,
         pipelines=pipelines,
