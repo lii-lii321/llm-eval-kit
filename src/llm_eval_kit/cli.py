@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .demo import print_summary, run_demo
+from .gates import evaluate_gates, metric_value, parse_fail_under
 
 
 def _positive_int(value: str) -> int:
@@ -41,6 +42,13 @@ def main(argv: list[str] | None = None) -> int:
         "--paraphrase-ratio", type=_ratio, default=1.0,
         help="查询改写比例，取值 [0, 1]（默认 1.0，对含同义词键的查询全部尝试改写）",
     )
+    parser.add_argument(
+        "--fail-under", action="append", default=[], metavar="指标=阈值",
+        help=(
+            "评测回归门禁：主管线指标低于阈值则退出码 1。可多次传入，"
+            "如 --fail-under recall_at_5=0.85 --fail-under mrr=0.8"
+        ),
+    )
     args = parser.parse_args(argv)
 
     for stream in (sys.stdout, sys.stderr):
@@ -50,6 +58,12 @@ def main(argv: list[str] | None = None) -> int:
             except (ValueError, OSError):
                 pass
 
+    try:
+        gates = [parse_fail_under(spec) for spec in args.fail_under]
+    except ValueError as exc:
+        print(f"参数错误：{exc}", file=sys.stderr)
+        return 2
+
     data = run_demo(
         out_dir=Path(args.out),
         seed=args.seed,
@@ -57,6 +71,23 @@ def main(argv: list[str] | None = None) -> int:
         paraphrase_ratio=args.paraphrase_ratio,
     )
     print_summary(data)
+
+    if gates:
+        primary = data.primary
+        try:
+            failures = evaluate_gates(primary, gates)
+        except ValueError as exc:
+            print(f"参数错误：{exc}", file=sys.stderr)
+            return 2
+        if failures:
+            print(f"评测回归门禁未通过（主管线：{primary.name}）", file=sys.stderr)
+            for failure in failures:
+                print(f"  - {failure.message}", file=sys.stderr)
+            return 1
+        passed = ", ".join(
+            f"{name}={metric_value(primary, name):.4f}≥{threshold:.4f}" for name, threshold in gates
+        )
+        print(f"评测回归门禁通过（主管线：{primary.name}）：{passed}")
     return 0
 
 
