@@ -1,0 +1,43 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安装依赖
+        run: pip install -e .
+      - name: 跑 demo 评测并生成报告（附带回归门禁，指标不达标则不发布）
+        run: python -m llm_eval_kit.cli demo --out docs/report --fail-under recall_at_5=0.85 --fail-under mrr=0.8
+      - name: 生成站点首页
+        run: cp docs/report/eval_report.html docs/report/index.html
+      - name: 配置 GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: 上传 Pages 产物
+        id: deployment
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/report
+      - name: 发布 GitHub Pages
+        uses: actions/deploy-pages@v4

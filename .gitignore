@@ -5,6 +5,7 @@ build/
 dist/
 .pytest_cache/
 reports/
+docs/report/
 .venv/
 venv/
 .env
