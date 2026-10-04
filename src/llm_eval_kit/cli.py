@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+from .corpus import Doc, load_corpus_from_dir
 from .dataset import DatasetError, load_dataset
 from .demo import build_demo_corpus, print_summary, run_demo
 from .gates import evaluate_gates, metric_value, parse_fail_under
@@ -48,7 +49,16 @@ def main(argv: list[str] | None = None) -> int:
         "--dataset", default=None, metavar="PATH.jsonl",
         help=(
             "JSONL 评测集路径（首个非空行可为 {\"_meta\": {...}}）。提供后跳过合成评测集，"
-            "改为从文件加载查询批量评测；语料沿用内置玩具语料，与 --num-cases/--paraphrase-ratio 互斥"
+            "改为从文件加载查询批量评测；语料默认为内置玩具语料，可用 --corpus-dir 替换，"
+            "与 --num-cases/--paraphrase-ratio 互斥"
+        ),
+    )
+    parser.add_argument(
+        "--corpus-dir", default=None, metavar="DIR",
+        help=(
+            "外部语料目录：加载目录下全部 .md/.txt 文件并切块作为评测语料"
+            "（doc_id 形如 `文件名#序号`，与 load_corpus_from_dir 同口径），替代内置玩具语料；"
+            "与 --dataset 组合即完成外部语料 + 标注查询集的一站式评测"
         ),
     )
     parser.add_argument(
@@ -73,8 +83,51 @@ def main(argv: list[str] | None = None) -> int:
         print(f"参数错误：{exc}", file=sys.stderr)
         return 2
 
-    cases = None
+    corpus_docs: list[Doc] | None = None
     notes_prefix: list[str] = []
+    if args.corpus_dir is not None:
+        if not args.corpus_dir.strip():
+            print("参数错误：--corpus-dir 需要非空的目录路径", file=sys.stderr)
+            return 2
+        if args.paraphrase_ratio != parser.get_default("paraphrase_ratio"):
+            print(
+                "参数错误：--paraphrase-ratio 的改写词典随内置 demo 语料固定，对 --corpus-dir 外部语料不生效，两者互斥",
+                file=sys.stderr,
+            )
+            return 2
+        corpus_root = Path(args.corpus_dir)
+        try:
+            loaded_docs = load_corpus_from_dir(corpus_root)
+        except OSError as exc:
+            print(f"语料目录加载失败：{exc}", file=sys.stderr)
+            return 2
+        except UnicodeDecodeError as exc:
+            print(f"语料目录加载失败：目录下存在非 UTF-8 编码的 .md/.txt 文件（{exc}）", file=sys.stderr)
+            return 2
+        if not loaded_docs:
+            candidates = [
+                p.name for p in corpus_root.iterdir() if p.is_file() and p.suffix.lower() in {".txt", ".md"}
+            ]
+            if candidates:
+                message = (
+                    f"语料目录加载失败：{corpus_root} 中 {len(candidates)} 个 .md/.txt 文件"
+                    "没有切出任何文本块（文件为空或只有空白）"
+                )
+            else:
+                message = (
+                    f"语料目录加载失败：{corpus_root} 下没有 .md/.txt 文件"
+                    "（仅读取目录顶层的这两个扩展名，不递归子目录）"
+                )
+            print(message, file=sys.stderr)
+            return 2
+        corpus_docs = loaded_docs
+        file_count = len({d.source for d in corpus_docs})
+        notes_prefix.append(
+            f"语料来源：外部目录 {corpus_root}（{file_count} 个文件，{len(corpus_docs)} 个文本块）"
+        )
+        print(f"已加载外部语料：{corpus_root}（{file_count} 个文件，{len(corpus_docs)} 个文本块）")
+
+    cases = None
     if args.dataset:
         if args.num_cases != parser.get_default("num_cases") or args.paraphrase_ratio != parser.get_default(
             "paraphrase_ratio"
@@ -94,12 +147,14 @@ def main(argv: list[str] | None = None) -> int:
             notes_prefix.append(f"评测集 _meta：{json.dumps(dataset.meta, ensure_ascii=False, sort_keys=True)}")
         print(f"已加载评测集：{dataset.path}")
         print(f"  {stats.describe()}")
-        unknown = dataset.unknown_doc_ids(doc.doc_id for doc in build_demo_corpus())
+        corpus_for_check = corpus_docs if corpus_docs is not None else build_demo_corpus()
+        corpus_label = "外部语料" if corpus_docs is not None else "内置玩具语料"
+        unknown = dataset.unknown_doc_ids(doc.doc_id for doc in corpus_for_check)
         if unknown:
             total = sum(len(ids) for ids in unknown.values())
             sample = "；".join(f"{qid}: {ids}" for qid, ids in list(unknown.items())[:3])
             print(
-                f"警告：{len(unknown)} 条查询引用了玩具语料中不存在的 doc_id（共 {total} 个），"
+                f"警告：{len(unknown)} 条查询引用了{corpus_label}中不存在的 doc_id（共 {total} 个），"
                 f"相关指标会被拉低：{sample}",
                 file=sys.stderr,
             )
@@ -111,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         paraphrase_ratio=args.paraphrase_ratio,
         cases=cases,
         notes_prefix=notes_prefix,
+        docs=corpus_docs,
     )
     print_summary(data)
 

@@ -65,12 +65,22 @@ python -m llm_eval_kit.cli --dataset my_annotations.jsonl --out reports \
   --fail-under recall_at_5=0.85 --fail-under mrr=0.8
 ```
 
+# 外部语料 + 标注查询集 + 回归门禁：一站式（--corpus-dir 替代内置玩具语料）
+python -m llm_eval_kit.cli --corpus-dir path/to/txt_docs --dataset my_annotations.jsonl \
+  --out reports --fail-under recall_at_5=0.85
+```
+
 - 加载失败（格式/校验错误）退出码 2，stderr 给出行号；门禁不达标退出码 1；
 - `--num-cases` / `--paraphrase-ratio` 是合成评测集专用参数，与 `--dataset` 互斥（退出码 2）；
 - `--seed` 仍可用：只影响 bootstrap 重采样，不影响从文件读哪些查询；
-- 语料沿用 demo 内置玩具语料。若评测集引用了语料中不存在的 `doc_id`
-  （永远检索不到，会静默拉低召回指标），CLI 会在 stderr 打印警告明细——标注与语料
-  允许分阶段演进，故警告不阻断。
+- **语料**默认为内置玩具语料；`--corpus-dir 目录` 加载该目录下全部 .md/.txt 文件并切块
+  （doc_id 形如 `文件名#序号`，与 `load_corpus_from_dir` 同口径）作为评测语料。目录不存在、
+  没有 .md/.txt 文件、文件全为空白时退出码 2，stderr 给出可诊断原因。纯 `--corpus-dir`
+  （不带 `--dataset`）也可以：从外部语料规则合成评测集（`--num-cases` 有效；
+  `--paraphrase-ratio` 的改写词典随内置语料固定，与 `--corpus-dir` 互斥，退出码 2）；
+  报告 notes 记录语料来源（内置 demo 或 目录路径 + 文件数 + 文本块数），保证报告可溯源；
+- 若评测集引用了语料中不存在的 `doc_id`（永远检索不到，会静默拉低召回指标），
+  CLI 会在 stderr 打印警告明细——标注与语料允许分阶段演进，故警告不阻断。
 
 ### Python 库
 
@@ -144,7 +154,10 @@ data = run_evaluation(cases, {"bm25": BM25Retriever(docs)}, top_k=10)
 - **数据集通道暂无参考答案字段**：JSONL 不含 reference answer，`--dataset` 跑的
   评测中 LLM-as-judge 段会静默跳过（judge 需要参考答案）；需要 judge 时可暂用
   合成评测集，或在代码里给 `EvalCase.answer` 赋值后走库接口；
-- **CLI `--dataset` 的语料是内置玩具语料**：对外部语料 + 人工标注集的完整组合，
-  用上面的 Python 库用法（`load_corpus_from_dir` + `load_dataset` + `run_evaluation`）；
+- **CLI 语料分块口径固定**：`--corpus-dir` 已支持外部 .md/.txt 目录语料（与 `--dataset`、
+  `--fail-under` 一站式组合，报告 notes 记录语料来源），但分块沿用 `load_corpus_from_dir`
+  默认参数（max_chars=300、仅目录顶层、不递归子目录、doc_id 按 `文件名#序号` 生成）；
+  需要自定义切块时仍走 Python 库（`load_corpus_from_dir` 的 `max_chars`，或自行构造 `Doc` 列表）。
+  标注引用的 `doc_id` 必须与最终切块一一对应，切块方案变了标注要复标（见上文标注指南）；
 - **非行级错误不带行号**：文件不存在、整体为空等错误没有对应行，`DatasetError.line`
   为 None。

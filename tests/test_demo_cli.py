@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,31 @@ from llm_eval_kit.demo import DEMO_DOCS, DEMO_SYNONYMS, ExtractiveAnswerer, buil
 from llm_eval_kit.retrieval import BM25Retriever
 
 EXAMPLES_DATASET = Path(__file__).resolve().parent.parent / "examples" / "dataset_demo.jsonl"
+
+
+def write_external_corpus(tmp_path: Path, name: str = "docs") -> Path:
+    """构造小型外部语料目录：2 个文件切出 3 个文本块（rag#000, rag#001, eval#000）。"""
+    corpus = tmp_path / name
+    corpus.mkdir()
+    (corpus / "rag.md").write_text(
+        "检索增强生成：先检索外部知识再生成答案，可显著缓解模型幻觉。\n\n"
+        "BM25：经典稀疏检索算法，基于词频与逆文档频率打分，无需训练。",
+        encoding="utf-8",
+    )
+    (corpus / "eval.txt").write_text(
+        "重排序：用交叉编码器对粗排候选精排，只处理少量候选却能显著提升排序质量。",
+        encoding="utf-8",
+    )
+    return corpus
+
+
+def write_jsonl_dataset(tmp_path: Path, records: list[dict], name: str = "ds.jsonl") -> Path:
+    path = tmp_path / name
+    path.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 class TestDemoCorpus:
@@ -118,3 +144,121 @@ class TestDatasetWeightedNDCG:
         rc = main(["demo", "--out", str(tmp_path), "--num-cases", "6"])
         assert rc == 0
         assert "Weighted NDCG@10" not in capsys.readouterr().out
+
+
+class TestCorpusDir:
+    """--corpus-dir 外部语料：与 --dataset/--fail-under 组合、报错口径与报告溯源。"""
+
+    def test_corpus_dir_with_dataset_end_to_end(self, tmp_path, capsys):
+        corpus = write_external_corpus(tmp_path)
+        dataset = write_jsonl_dataset(
+            tmp_path,
+            [
+                {"_meta": {"corpus": "外部冒烟语料"}},
+                {"query_id": "q1", "query": "什么是检索增强生成？", "relevant_doc_ids": ["rag#000"]},
+                {
+                    "query_id": "q2",
+                    "query": "BM25 为什么无需训练？",
+                    "relevant_doc_ids": ["rag#001"],
+                    "grades": {"rag#001": 2},
+                },
+                {"query_id": "q3", "query": "重排序为什么能提升排序质量？", "relevant_doc_ids": ["eval#000"]},
+            ],
+        )
+        out = tmp_path / "reports"
+        rc = main(
+            [
+                "--corpus-dir", str(corpus), "--dataset", str(dataset),
+                "--out", str(out), "--fail-under", "recall_at_5=0.3",
+            ]
+        )
+        assert rc == 0
+        assert (out / "eval_report.md").exists()
+        assert (out / "eval_report.html").exists()
+        captured = capsys.readouterr()
+        assert "已加载外部语料" in captured.out
+        assert "Weighted NDCG@10" in captured.out
+        assert "评测回归门禁通过" in captured.out
+        assert "警告" not in captured.err
+        report = (out / "eval_report.md").read_text(encoding="utf-8")
+        assert f"语料来源：外部目录 {corpus}（2 个文件，3 个文本块）" in report
+        assert "数字由外部语料实测得出" in report
+        assert "内置 24 段玩具语料" not in report
+
+    def test_corpus_dir_alone_synthesizes_cases(self, tmp_path, capsys):
+        corpus = write_external_corpus(tmp_path)
+        out = tmp_path / "reports"
+        rc = main(["--corpus-dir", str(corpus), "--out", str(out), "--num-cases", "3"])
+        assert rc == 0
+        assert (out / "eval_report.md").exists()
+        assert "语料文档数: 3" in capsys.readouterr().out
+        report = (out / "eval_report.md").read_text(encoding="utf-8")
+        assert f"语料来源：外部目录 {corpus}" in report
+        assert "数字由外部语料实测得出" in report
+        assert "内置 24 段玩具语料" not in report
+
+    def test_dataset_unknown_doc_id_warns_against_external_corpus(self, tmp_path, capsys):
+        corpus = write_external_corpus(tmp_path)
+        dataset = write_jsonl_dataset(
+            tmp_path,
+            [{"query_id": "q1", "query": "什么是检索增强生成？", "relevant_doc_ids": ["rag#000", "d99"]}],
+        )
+        rc = main(["--corpus-dir", str(corpus), "--dataset", str(dataset), "--out", str(tmp_path)])
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "外部语料中不存在的 doc_id" in captured.err
+        assert "d99" in captured.err
+        assert "bm25" in captured.out
+
+    def test_corpus_dir_with_failing_gate_exits_1(self, tmp_path, capsys):
+        corpus = write_external_corpus(tmp_path)
+        dataset = write_jsonl_dataset(
+            tmp_path,
+            [{"query_id": "q1", "query": "什么是检索增强生成？", "relevant_doc_ids": ["rag#000", "d99"]}],
+        )
+        rc = main(
+            [
+                "--corpus-dir", str(corpus), "--dataset", str(dataset),
+                "--out", str(tmp_path), "--fail-under", "recall_at_1=1.0",
+            ]
+        )
+        assert rc == 1
+        assert "门禁未达标" in capsys.readouterr().err
+
+    def test_empty_corpus_dir_exits_2(self, tmp_path, capsys):
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        rc = main(["--corpus-dir", str(empty), "--out", str(tmp_path)])
+        assert rc == 2
+        assert "没有 .md/.txt 文件" in capsys.readouterr().err
+
+    def test_missing_corpus_dir_exits_2(self, tmp_path, capsys):
+        rc = main(["--corpus-dir", str(tmp_path / "nope"), "--out", str(tmp_path)])
+        assert rc == 2
+        assert "语料目录加载失败" in capsys.readouterr().err
+
+    def test_corpus_dir_without_md_txt_exits_2(self, tmp_path, capsys):
+        only_py = tmp_path / "pyonly"
+        only_py.mkdir()
+        (only_py / "x.py").write_text("print(1)", encoding="utf-8")
+        rc = main(["--corpus-dir", str(only_py), "--out", str(tmp_path)])
+        assert rc == 2
+        assert "没有 .md/.txt 文件" in capsys.readouterr().err
+
+    def test_corpus_dir_blank_files_exits_2(self, tmp_path, capsys):
+        blank = tmp_path / "blank"
+        blank.mkdir()
+        (blank / "a.md").write_text("", encoding="utf-8")
+        rc = main(["--corpus-dir", str(blank), "--out", str(tmp_path)])
+        assert rc == 2
+        assert "没有切出任何文本块" in capsys.readouterr().err
+
+    def test_blank_corpus_dir_value_rejected(self, tmp_path):
+        rc = main(["--corpus-dir", "", "--out", str(tmp_path)])
+        assert rc == 2
+
+    def test_paraphrase_ratio_conflicts_with_corpus_dir(self, tmp_path, capsys):
+        corpus = write_external_corpus(tmp_path)
+        rc = main(["--corpus-dir", str(corpus), "--out", str(tmp_path), "--paraphrase-ratio", "0.5"])
+        assert rc == 2
+        assert "互斥" in capsys.readouterr().err

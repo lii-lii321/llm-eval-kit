@@ -100,6 +100,7 @@ def run_demo(
     judge: JudgeProvider | None = None,
     cases: list[EvalCase] | None = None,
     notes_prefix: list[str] | None = None,
+    docs: list[Doc] | None = None,
 ) -> ReportData:
     """跑通完整评测闭环并写出报告，返回 ReportData。
 
@@ -107,16 +108,20 @@ def run_demo(
     构造词面不匹配的困难样本，让 badcase 归因链路在 demo 里可见。
     cases 显式传入时（如 CLI --dataset 从 JSONL 加载的查询集）跳过合成生成，
     此时 seed/num_cases/paraphrase_ratio 不参与用例构造（seed 仅影响 bootstrap）。
+    docs 显式传入时（如 CLI --corpus-dir 加载的外部目录语料）替代内置玩具语料，
+    此时合成评测集不再套用 demo 专属改写词典（paraphrase_ratio 不生效）。
     notes_prefix 会写进报告 notes 的最前面，用于记录评测集来源与统计。
     """
-    docs = build_demo_corpus()
+    external_corpus = docs is not None
+    if docs is None:
+        docs = build_demo_corpus()
     if cases is None:
         cases = generate_eval_set(
             docs,
             num_cases=num_cases,
             seed=seed,
             paraphrase_ratio=paraphrase_ratio,
-            synonym_map=DEMO_SYNONYMS,
+            synonym_map=None if external_corpus else DEMO_SYNONYMS,
         )
     retrievers: dict[str, BaseRetriever] = {
         "bm25": BM25Retriever(docs),
@@ -133,7 +138,10 @@ def run_demo(
         answers=answers,
     )
     data.notes.extend(notes_prefix or [])
-    data.notes.append("数字由内置 24 段玩具语料实测得出，仅代表 demo 规模，机器与运行环境不同会有差异。")
+    if external_corpus:
+        data.notes.append("数字由外部语料实测得出，仅代表本次语料规模，机器与运行环境不同会有差异。")
+    else:
+        data.notes.append("数字由内置 24 段玩具语料实测得出，仅代表 demo 规模，机器与运行环境不同会有差异。")
     md_path, html_path = write_reports(data, out_dir)
     data.notes.append(f"报告已写入：{md_path} 与 {html_path}")
     return data
