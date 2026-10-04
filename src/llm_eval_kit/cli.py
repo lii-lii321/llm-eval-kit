@@ -62,6 +62,10 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--max-chars", type=_positive_int, default=300, metavar="N",
+        help="外部语料切块的最大字符数（正整数，默认 300；仅与 --corpus-dir 组合有效）",
+    )
+    parser.add_argument(
         "--fail-under", action="append", default=[], metavar="指标=阈值",
         help=(
             "评测回归门禁：主管线指标低于阈值则退出码 1。可多次传入，"
@@ -83,6 +87,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"参数错误：{exc}", file=sys.stderr)
         return 2
 
+    if args.max_chars != parser.get_default("max_chars") and args.corpus_dir is None:
+        print("参数错误：--max-chars 仅与 --corpus-dir 组合有效", file=sys.stderr)
+        return 2
+
     corpus_docs: list[Doc] | None = None
     notes_prefix: list[str] = []
     if args.corpus_dir is not None:
@@ -97,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         corpus_root = Path(args.corpus_dir)
         try:
-            loaded_docs = load_corpus_from_dir(corpus_root)
+            loaded_docs = load_corpus_from_dir(corpus_root, max_chars=args.max_chars)
         except OSError as exc:
             print(f"语料目录加载失败：{exc}", file=sys.stderr)
             return 2
@@ -123,7 +131,8 @@ def main(argv: list[str] | None = None) -> int:
         corpus_docs = loaded_docs
         file_count = len({d.source for d in corpus_docs})
         notes_prefix.append(
-            f"语料来源：外部目录 {corpus_root}（{file_count} 个文件，{len(corpus_docs)} 个文本块）"
+            f"语料来源：外部目录 {corpus_root}（{file_count} 个文件，{len(corpus_docs)} 个文本块）；"
+            f"切块上限 {args.max_chars} 字符"
         )
         print(f"已加载外部语料：{corpus_root}（{file_count} 个文件，{len(corpus_docs)} 个文本块）")
 

@@ -154,10 +154,10 @@ data = run_evaluation(cases, {"bm25": BM25Retriever(docs)}, top_k=10)
 - **数据集通道暂无参考答案字段**：JSONL 不含 reference answer，`--dataset` 跑的
   评测中 LLM-as-judge 段会静默跳过（judge 需要参考答案）；需要 judge 时可暂用
   合成评测集，或在代码里给 `EvalCase.answer` 赋值后走库接口；
-- **CLI 语料分块口径固定**：`--corpus-dir` 已支持外部 .md/.txt 目录语料（与 `--dataset`、
-  `--fail-under` 一站式组合，报告 notes 记录语料来源），但分块沿用 `load_corpus_from_dir`
-  默认参数（max_chars=300、仅目录顶层、不递归子目录、doc_id 按 `文件名#序号` 生成）；
-  需要自定义切块时仍走 Python 库（`load_corpus_from_dir` 的 `max_chars`，或自行构造 `Doc` 列表）。
+- **CLI 语料分块口径部分参数化**：`--corpus-dir` 已支持外部 .md/.txt 目录语料（与 `--dataset`、
+  `--fail-under` 一站式组合，报告 notes 记录语料来源），切块大小可用 `--max-chars` 调整（默认 300，
+  仅与 `--corpus-dir` 组合有效）；但仍仅读取目录顶层、不递归子目录、doc_id 按 `文件名#序号` 生成，
+  递归加载或自定义切块策略仍走 Python 库（`load_corpus_from_dir` 的 `max_chars`，或自行构造 `Doc` 列表）。
   标注引用的 `doc_id` 必须与最终切块一一对应，切块方案变了标注要复标（见上文标注指南）；
 - **非行级错误不带行号**：文件不存在、整体为空等错误没有对应行，`DatasetError.line`
   为 None。

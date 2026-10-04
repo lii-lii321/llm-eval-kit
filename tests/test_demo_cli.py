@@ -262,3 +262,41 @@ class TestCorpusDir:
         rc = main(["--corpus-dir", str(corpus), "--out", str(tmp_path), "--paraphrase-ratio", "0.5"])
         assert rc == 2
         assert "互斥" in capsys.readouterr().err
+
+    @staticmethod
+    def _write_long_corpus(tmp_path):
+        corpus = tmp_path / "long_corpus"
+        corpus.mkdir()
+        paragraph = "".join(f"这是第{i}句测试内容，用于验证切块边界。" for i in range(30))
+        (corpus / "long.md").write_text(paragraph, encoding="utf-8")
+        return corpus
+
+    def test_max_chars_controls_chunking(self, tmp_path):
+        corpus = self._write_long_corpus(tmp_path)
+        counts = {}
+        for max_chars in (300, 40):
+            out = tmp_path / f"reports_{max_chars}"
+            rc = main(
+                [
+                    "--corpus-dir", str(corpus), "--out", str(out),
+                    "--max-chars", str(max_chars), "--num-cases", "3",
+                ]
+            )
+            assert rc == 0
+            report = (out / "eval_report.md").read_text(encoding="utf-8")
+            assert f"切块上限 {max_chars} 字符" in report
+            marker = "（1 个文件，"
+            tail = report.split(marker, 1)[1]
+            counts[max_chars] = int(tail.split("个文本块", 1)[0])
+        assert counts[40] > counts[300]
+
+    def test_max_chars_without_corpus_dir_rejected(self, tmp_path, capsys):
+        rc = main(["--out", str(tmp_path), "--max-chars", "120"])
+        assert rc == 2
+        assert "仅与 --corpus-dir 组合有效" in capsys.readouterr().err
+
+    def test_max_chars_invalid_rejected(self, tmp_path):
+        corpus = write_external_corpus(tmp_path)
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--corpus-dir", str(corpus), "--out", str(tmp_path), "--max-chars", "0"])
+        assert excinfo.value.code == 2

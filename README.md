@@ -226,7 +226,7 @@ src/llm_eval_kit/
 ├── demo.py          # 玩具语料与 demo 编排
 └── cli.py           # 命令行入口
 examples/dataset_demo.jsonl  # 合成 demo 评测集（非人工标注）
-tests/               # 343 个离线测试，零网络依赖
+tests/               # 346 个离线测试，零网络依赖
 docs/PERFORMANCE.md  # demo 实测性能报告
 docs/ADAPTERS.md     # 外部检索器接入指南（含 Math_Tutor_RAG 适配示例）
 docs/datasets.md     # 评测数据集格式规范与人工标注指南
@@ -244,7 +244,7 @@ docs/datasets.md     # 评测数据集格式规范与人工标注指南
 - **检索器是单机实现**：BM25/TF 玩具版全量扫描，适合几百块以内的语料；大语料请用 `FastBM25Retriever`（倒排索引，2 万段实测查询 P50 0.6ms vs 玩具版 23.4ms）——但查询被语料头部高频词元主导时收益会收窄到约 2.6x（扫描量占比与两组实测见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)）；得分为 0（零词面重叠）的文档不返回结果；均非生产级检索引擎
 - **外部检索器的 badcase 归因依赖 doc_texts**：外部检索器不提供 doc_id → 原文映射时，归因会把所有未命中归为"语料缺失"，与真实失败机理可能不符（机制与建议见 [docs/ADAPTERS.md](docs/ADAPTERS.md)）；显式传入 `doc_texts` 可获得正确归因
 - **Recall/MRR/MAP 仍按二元相关度**：分级相关度标注（`grades` 0/1/2）已进入排序指标——评测集带 `grades` 时自动产出 Weighted NDCG@10（指数增益 2^g − 1，含 bootstrap 置信区间，见 [docs/datasets.md](docs/datasets.md) 与 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)）；但 Recall/MRR/MAP 与二元 NDCG@10 仍按二元相关度口径计算，分级信息不参与这些指标。无 `grades` 的评测集不产出 Weighted NDCG@10（报告显示 —，门禁报不可用），不做 0 值冒充
-- **JSONL 评测集通道暂无参考答案字段**：`--dataset` 跑的评测中 LLM-as-judge 段会静默跳过（judge 需要参考答案），需要 judge 时可暂用合成评测集或走库接口给 `EvalCase.answer` 赋值。外部语料 + 人工标注集已可由 CLI 一站式完成（`--corpus-dir` + `--dataset`，见 [docs/datasets.md](docs/datasets.md)），但 CLI 语料分块口径固定为 `load_corpus_from_dir` 默认参数（max_chars=300、仅目录顶层、不递归子目录），自定义切块仍需走库接口
+- **JSONL 评测集通道暂无参考答案字段**：`--dataset` 跑的评测中 LLM-as-judge 段会静默跳过（judge 需要参考答案），需要 judge 时可暂用合成评测集或走库接口给 `EvalCase.answer` 赋值。外部语料 + 人工标注集已可由 CLI 一站式完成（`--corpus-dir` + `--dataset`，切块大小可用 `--max-chars` 调整，见 [docs/datasets.md](docs/datasets.md)），但 CLI 语料加载仍仅读取目录顶层 .md/.txt、不递归子目录，递归或自定义切块策略需走库接口
 - **bootstrap 置信区间在极小评测集上不可靠**：非参数百分位 bootstrap 在样本数很小（如 n<10）时覆盖率不足、区间偏窄，n=1 时退化为点估计；demo 规模（24 条）下的区间仅作不确定性参考，不构成统计学推断
 - **OpenAICompatibleJudge 的真实服务验证范围**：已于 2026-10-02 对阿里云 DashScope（qwen-turbo，OpenAI 兼容模式）完成真实端到端调用，四维评分与 rationale 解析正确（见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)）；HTTP 层另有本地真实 socket 集成测试（`tests/test_judge_real_http.py`）。OpenAI 官方端点与其他 provider 未实测；仓库测试套件保持全离线，真实冒烟测试默认跳过（设 `EVAL_REAL_LLM_SMOKE=1` 与端点环境变量后可复验）
 - **SSRF 防护只覆盖 URL 字面量**：域名解析后的 IP 不做二次校验（DNS rebinding 不在防护范围）
