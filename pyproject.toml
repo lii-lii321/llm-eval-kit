@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-eval-kit"
-version = "0.1.0"
+version = "1.0.0"
 description = "离线可跑的 RAG 检索与 LLM 应用评测工具库：合成评测集、检索指标、LLM-as-judge、badcase 归因与报告输出"
 readme = "README.md"
 requires-python = ">=3.10"
