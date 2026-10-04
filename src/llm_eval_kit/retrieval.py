@@ -123,6 +123,46 @@ class TFRetriever(BaseRetriever):
         return [RetrievalResult(doc_id=doc_id, score=score) for score, doc_id in scores[:top_k]]
 
 
+class RRFHybridRetriever(BaseRetriever):
+    """RRF（倒数排名融合）：对多路子检索器的排名取 1/(k + rank) 累加。
+
+    与 HybridRetriever 的"归一化得分加权"不同，RRF 只消费排名、不消费分数——
+    对打分尺度异构的多路检索（稀疏 / 稠密 / 规则）更稳健，k 为平滑常数
+    （文献常用 60）。子检索器必须与基座语料同源（doc_id 集合一致），
+    否则融合结果无意义；某路结果中缺席的文档不获得该路的票。
+    """
+
+    name = "rrf"
+
+    def __init__(self, docs: list[Doc], *, k: int = 60, retrievers: list[BaseRetriever] | None = None):
+        super().__init__(docs)
+        if k < 1:
+            raise ValueError("k 必须为正整数")
+        self.k = k
+        if retrievers is None:
+            retrievers = [BM25Retriever(docs), TFRetriever(docs)]
+        if not retrievers:
+            raise ValueError("至少需要一路子检索器")
+        expected = {d.doc_id for d in docs}
+        for r in retrievers:
+            if set(r.doc_texts) != expected:
+                raise ValueError(f"子检索器 {r.name!r} 的语料与基座不一致（doc_id 集合不同）")
+        self._retrievers = retrievers
+        self._doc_ids = [d.doc_id for d in docs]
+
+    def retrieve(self, query: str, top_k: int = 10) -> list[RetrievalResult]:
+        self._check_top_k(top_k)
+        if not self._doc_ids:
+            return []
+        full_k = len(self._doc_ids)
+        rrf: dict[str, float] = {}
+        for retriever in self._retrievers:
+            for rank, result in enumerate(retriever.retrieve(query, top_k=full_k), start=1):
+                rrf[result.doc_id] = rrf.get(result.doc_id, 0.0) + 1.0 / (self.k + rank)
+        ranked = sorted(rrf.items(), key=lambda x: (-x[1], x[0]))
+        return [RetrievalResult(doc_id=doc_id, score=score) for doc_id, score in ranked[:top_k]]
+
+
 class HybridRetriever(BaseRetriever):
     """混合检索：BM25 与 TF 的归一化得分加权融合，alpha 为 BM25 权重。"""
 

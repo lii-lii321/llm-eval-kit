@@ -21,7 +21,7 @@
 - **LLM-as-judge 四维评分**：正确性 / 相关性 / 可操作性 / 清晰度（1-5 分）。provider 可插拔——内置确定性 `MockJudge`（离线可跑、测试用）；`OpenAICompatibleJudge` 读环境变量，未配置 key 时优雅跳过；`SelfConsistencyJudge` 包装任意 judge 采样 n 次按维度多数票，压单次评分噪声
 - **badcase 归因**：对 top-K 未命中查询分类——关键词不匹配 / 语义漂移 / 语料缺失，附可解释 detail
 - **报告输出**：Markdown + HTML 各一份，含指标表格、归因表、评分表与未命中示例
-- **端到端 demo**：内置 24 段玩具语料 + 玩具 BM25/词频/混合检索器，一条命令跑通全链路
+- **端到端 demo**：内置 24 段玩具语料 + 玩具 BM25/词频/加权混合/RRF 融合四种检索器，一条命令跑通全链路
 
 ## 架构
 
@@ -231,7 +231,7 @@ src/llm_eval_kit/
 ├── corpus.py        # Doc 数据结构、纯文本文档加载与切块
 ├── dataset.py       # JSONL 评测集加载/校验/统计（人工标注集通道）
 ├── synth.py         # 规则式合成评测集生成器
-├── retrieval.py     # BM25 / 词频 / 混合检索器
+├── retrieval.py     # BM25 / 词频 / 加权混合 / RRF 融合检索器
 ├── fast_retriever.py # 倒排索引 BM25（大语料快速路径，打分口径与 BM25 一致）
 ├── adapters.py      # Retriever 协议、CallableRetriever 与外部检索器适配
 ├── metrics.py       # Recall@K / MRR / MAP@10 / NDCG@10 / 加权 NDCG（分级相关度）/ bootstrap 置信区间 / 延迟分位数
@@ -243,7 +243,7 @@ src/llm_eval_kit/
 ├── demo.py          # 玩具语料与 demo 编排
 └── cli.py           # 命令行入口
 examples/dataset_demo.jsonl  # 合成 demo 评测集（非人工标注）
-tests/               # 346 个离线测试，零网络依赖
+tests/               # 368 个离线测试，零网络依赖
 docs/PERFORMANCE.md  # demo 实测性能报告
 docs/ADAPTERS.md     # 外部检索器接入指南（含 Math_Tutor_RAG 适配示例）
 docs/datasets.md     # 评测数据集格式规范与人工标注指南

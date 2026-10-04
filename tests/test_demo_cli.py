@@ -75,8 +75,8 @@ class TestRunDemo:
         data = run_demo(out_dir=tmp_path, num_cases=10, paraphrase_ratio=0.1)
         assert (tmp_path / "eval_report.md").exists()
         assert (tmp_path / "eval_report.html").exists()
-        assert len(data.pipelines) == 3
-        assert [p.name for p in data.pipelines] == ["bm25", "tf", "hybrid"]
+        assert len(data.pipelines) == 4
+        assert [p.name for p in data.pipelines] == ["bm25", "tf", "hybrid", "rrf"]
         assert all(0.0 <= p.recall[10] <= 1.0 for p in data.pipelines)
         assert data.corpus_size == 24
 

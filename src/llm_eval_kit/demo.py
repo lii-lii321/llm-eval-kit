@@ -14,7 +14,7 @@ from .corpus import Doc
 from .judge import DIMENSIONS_ZH, JudgeProvider, MockJudge
 from .pipeline import run_evaluation
 from .report import ReportData, write_reports
-from .retrieval import BaseRetriever, BM25Retriever, HybridRetriever, TFRetriever
+from .retrieval import BaseRetriever, BM25Retriever, HybridRetriever, RRFHybridRetriever, TFRetriever
 from .synth import EvalCase, generate_eval_set
 
 # (doc_id, 正文)。刻意让主题词以短中文串开头，规则合成器能提出自然短语。
@@ -127,6 +127,7 @@ def run_demo(
         "bm25": BM25Retriever(docs),
         "tf": TFRetriever(docs),
         "hybrid": HybridRetriever(docs, alpha=0.6),
+        "rrf": RRFHybridRetriever(docs),
     }
     answerer = ExtractiveAnswerer(retrievers["bm25"])
     answers = {case.qid: answerer.answer(case.query) for case in cases}
