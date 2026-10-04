@@ -16,6 +16,7 @@
 - **评测数据集管理（JSONL）**：人工标注查询集的加载/校验/评测通道——`load_dataset` 严格校验（缺字段、重复 query_id、空相关文档等报错均带行号），`_meta` 元信息行记录标注日期/标注人/版本，`DatasetStats` 输出条数与查询长度分布；CLI `--dataset` 从文件读查询批量评测，`--corpus-dir` 加载外部 .md/.txt 目录语料替代内置玩具语料（外部语料 + 标注集 + 门禁一站式），与 `--fail-under` 门禁组合可用，见 [docs/datasets.md](docs/datasets.md)
 - **检索指标**：Recall@K、MRR、MAP@10、NDCG@10（二元相关度）、Weighted NDCG@10（分级相关度，评测集带 `grades` 时自动产出）、命中率与 P50/P95 延迟，聚合指标附 bootstrap 95% 置信区间（固定 seed 完全可复现），支持多路检索管线同台对比
 - **外部检索器接入**：Retriever 协议（duck typing）+ `CallableRetriever` 宽容归一化——任何检索系统（向量库 / Elasticsearch / 自研 RAG）实现一个 `retrieve(query, top_k)` 方法即可同台评测，协议不满足时报可诊断错误，见 [docs/ADAPTERS.md](docs/ADAPTERS.md)
+- **大语料快速路径**：`FastBM25Retriever`（纯 stdlib 倒排索引，打分口径与玩具 BM25 一致）——2 万段语料实测单查询 P50 由 23.4ms 降至 0.6ms（中频词元查询约 40x；查询含高频词元时收益收窄至 2.6x，见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)），复现：`python scripts/bench_large_corpus.py`
 - **评测回归门禁**：`--fail-under 指标名=阈值`（可多次），任一指标低于阈值进程退出码 1 并输出实测值 vs 阈值 vs 差距，可直接作 CI 合并卡点
 - **LLM-as-judge 四维评分**：正确性 / 相关性 / 可操作性 / 清晰度（1-5 分）。provider 可插拔——内置确定性 `MockJudge`（离线可跑、测试用）；`OpenAICompatibleJudge` 读环境变量，未配置 key 时优雅跳过
 - **badcase 归因**：对 top-K 未命中查询分类——关键词不匹配 / 语义漂移 / 语料缺失，附可解释 detail
@@ -214,6 +215,7 @@ src/llm_eval_kit/
 ├── dataset.py       # JSONL 评测集加载/校验/统计（人工标注集通道）
 ├── synth.py         # 规则式合成评测集生成器
 ├── retrieval.py     # BM25 / 词频 / 混合检索器
+├── fast_retriever.py # 倒排索引 BM25（大语料快速路径，打分口径与 BM25 一致）
 ├── adapters.py      # Retriever 协议、CallableRetriever 与外部检索器适配
 ├── metrics.py       # Recall@K / MRR / MAP@10 / NDCG@10 / 加权 NDCG（分级相关度）/ bootstrap 置信区间 / 延迟分位数
 ├── gates.py         # 评测回归门禁（--fail-under 的解析与判定）
@@ -224,7 +226,7 @@ src/llm_eval_kit/
 ├── demo.py          # 玩具语料与 demo 编排
 └── cli.py           # 命令行入口
 examples/dataset_demo.jsonl  # 合成 demo 评测集（非人工标注）
-tests/               # 336 个离线测试，零网络依赖
+tests/               # 343 个离线测试，零网络依赖
 docs/PERFORMANCE.md  # demo 实测性能报告
 docs/ADAPTERS.md     # 外部检索器接入指南（含 Math_Tutor_RAG 适配示例）
 docs/datasets.md     # 评测数据集格式规范与人工标注指南
@@ -239,7 +241,7 @@ docs/datasets.md     # 评测数据集格式规范与人工标注指南
 
 - **合成查询偏词面化**：规则生成器基于词面统计，无语义理解；长中文串按虚词切分 + 截断到 6 字，可能产出「常见维度有正」这类不自然查询。评测查询不再只有合成一条路——人工标注查询集现已支持（`--dataset` / `load_dataset`，见 [docs/datasets.md](docs/datasets.md)），生产级合成建议用 LLM 合成或真实查询日志
 - **中文分词是字符二元组近似**：不是真正的中文分词，跨词二元组（如「索评」）会引入噪声；对检索效果敏感的场景建议接 jieba 或真实向量检索
-- **检索器是单机玩具实现**：BM25/TF 为纯 Python 教学实现，适合几百块以内的语料，未做性能优化；得分为 0（零词面重叠）的文档不返回结果
+- **检索器是单机实现**：BM25/TF 玩具版全量扫描，适合几百块以内的语料；大语料请用 `FastBM25Retriever`（倒排索引，2 万段实测查询 P50 0.6ms vs 玩具版 23.4ms）——但查询被语料头部高频词元主导时收益会收窄到约 2.6x（扫描量占比与两组实测见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)）；得分为 0（零词面重叠）的文档不返回结果；均非生产级检索引擎
 - **外部检索器的 badcase 归因依赖 doc_texts**：外部检索器不提供 doc_id → 原文映射时，归因会把所有未命中归为"语料缺失"，与真实失败机理可能不符（机制与建议见 [docs/ADAPTERS.md](docs/ADAPTERS.md)）；显式传入 `doc_texts` 可获得正确归因
 - **Recall/MRR/MAP 仍按二元相关度**：分级相关度标注（`grades` 0/1/2）已进入排序指标——评测集带 `grades` 时自动产出 Weighted NDCG@10（指数增益 2^g − 1，含 bootstrap 置信区间，见 [docs/datasets.md](docs/datasets.md) 与 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)）；但 Recall/MRR/MAP 与二元 NDCG@10 仍按二元相关度口径计算，分级信息不参与这些指标。无 `grades` 的评测集不产出 Weighted NDCG@10（报告显示 —，门禁报不可用），不做 0 值冒充
 - **JSONL 评测集通道暂无参考答案字段**：`--dataset` 跑的评测中 LLM-as-judge 段会静默跳过（judge 需要参考答案），需要 judge 时可暂用合成评测集或走库接口给 `EvalCase.answer` 赋值。外部语料 + 人工标注集已可由 CLI 一站式完成（`--corpus-dir` + `--dataset`，见 [docs/datasets.md](docs/datasets.md)），但 CLI 语料分块口径固定为 `load_corpus_from_dir` 默认参数（max_chars=300、仅目录顶层、不递归子目录），自定义切块仍需走库接口
