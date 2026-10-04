@@ -351,3 +351,171 @@ class TestParseAndSummary:
         summary = judge_summary([])
         assert summary.n_scored == 0
         assert summary.dim_means == {}
+
+
+class TestSelfConsistencyJudge:
+    """自一致裁判：多数票、并列裁决、容错语义与管线接入。"""
+
+    @staticmethod
+    def _votes(correctness: int) -> dict[str, int]:
+        """构造一次投票：correctness 取给定值，其余维度恒为 3。"""
+        return {d: (correctness if d == "correctness" else 3) for d in DIMENSIONS}
+
+    class _ScriptedJudge:
+        """按脚本逐次返回预定评分或抛出异常的假裁判，用于精确控制票面。"""
+
+        def __init__(self, script):
+            self.script = script
+            self.calls = 0
+            self.name = "scripted"
+
+        def score(self, *, query, answer, reference="", context=""):
+            step = self.script[self.calls]
+            self.calls += 1
+            if isinstance(step, Exception):
+                raise step
+            return judge_module.JudgeScore(provider=self.name, scores=step, rationale=f"第{self.calls}票")
+
+    def test_n_below_one_rejected(self):
+        with pytest.raises(ValueError):
+            judge_module.SelfConsistencyJudge(MockJudge(), n=0)
+
+    def test_majority_beats_outliers(self):
+        inner = self._ScriptedJudge([self._votes(3), self._votes(4), self._votes(4), self._votes(4), self._votes(5)])
+        result = judge_module.SelfConsistencyJudge(inner, n=5).score(query="q", answer="a")
+        assert result.scores["correctness"] == 4
+        assert all(result.scores[d] == 3 for d in DIMENSIONS if d != "correctness")
+        assert inner.calls == 5
+
+    def test_full_tie_breaks_toward_mean_then_smaller(self):
+        # 四票全不同：并列候选 [1,2,4,5]，均值 3，2 与 4 距离并列 -> 取较小者 2
+        inner = self._ScriptedJudge([self._votes(1), self._votes(2), self._votes(4), self._votes(5)])
+        result = judge_module.SelfConsistencyJudge(inner, n=4).score(query="q", answer="a")
+        assert result.scores["correctness"] == 2
+
+    def test_pair_tie_breaks_toward_mean(self):
+        # 两票 [2,5]：均值 3.5，两侧距离并列 -> 取较小者 2
+        inner = self._ScriptedJudge([self._votes(2), self._votes(5)])
+        result = judge_module.SelfConsistencyJudge(inner, n=2).score(query="q", answer="a")
+        assert result.scores["correctness"] == 2
+
+    def test_majority_vote_helper(self):
+        assert judge_module._majority_vote([1, 2, 2, 5]) == 2
+        assert judge_module._majority_vote([3]) == 3
+        assert judge_module._majority_vote([1, 2, 4, 5]) == 2  # 全并列走向均值+较小
+
+    def test_provider_name_and_rationale(self):
+        inner = self._ScriptedJudge([self._votes(3)] * 2)
+        result = judge_module.SelfConsistencyJudge(inner, n=2).score(query="q", answer="a")
+        assert result.provider == "scripted_sc2"
+        assert result.rationale.startswith("自一致采样")
+        assert "有效票 2" in result.rationale
+        assert "第1票" in result.rationale
+
+    def test_failures_within_tolerance_still_score(self):
+        # n=5 需 3 票严格多数：前两票失败仍可翻盘
+        inner = self._ScriptedJudge(
+            [LLMJudgeError("boom1"), LLMJudgeError("boom2"), self._votes(4), self._votes(4), self._votes(4)]
+        )
+        result = judge_module.SelfConsistencyJudge(inner, n=5).score(query="q", answer="a")
+        assert result.scores["correctness"] == 4
+        assert inner.calls == 5
+        assert "有效票 3" in result.rationale
+
+    def test_failures_beyond_tolerance_raise_first_error(self):
+        inner = self._ScriptedJudge(
+            [LLMJudgeError("boom1"), LLMJudgeError("boom2"), LLMJudgeError("boom3"), self._votes(4)]
+        )
+        with pytest.raises(LLMJudgeError, match="boom1"):
+            judge_module.SelfConsistencyJudge(inner, n=5).score(query="q", answer="a")
+
+    def test_llm_unavailable_semantics_preserved(self):
+        # 第一次失败是 LLMUnavailable 时，超容错抛出它——管线跳过语义不因包装而失效
+        inner = self._ScriptedJudge([LLMUnavailable("no key"), LLMJudgeError("x"), LLMJudgeError("y")])
+        with pytest.raises(LLMUnavailable):
+            judge_module.SelfConsistencyJudge(inner, n=5).score(query="q", answer="a")
+
+    def test_single_sample_passthrough(self):
+        result = judge_module.SelfConsistencyJudge(MockJudge(), n=1).score(
+            query="什么是 BM25", answer="BM25 是打分算法。", reference="BM25 基于词频打分。"
+        )
+        direct = MockJudge().score(query="什么是 BM25", answer="BM25 是打分算法。", reference="BM25 基于词频打分。")
+        assert result.scores == direct.scores
+        assert result.provider == "mock_sc1"
+
+    def test_wraps_openai_provider_and_counts_calls(self, monkeypatch):
+        judge = judge_module.OpenAICompatibleJudge(base_url="https://api.example.com/v1", api_key="k", model="m")
+        calls = []
+
+        def fake_post(url, payload, *, api_key, timeout):
+            calls.append(url)
+            content = '{"correctness": 4, "relevance": 4, "actionability": 4, "clarity": 4}'
+            return {"choices": [{"message": {"content": content}}]}
+
+        monkeypatch.setattr(judge_module, "_http_post_json", fake_post)
+        result = judge_module.SelfConsistencyJudge(judge, n=3).score(query="q", answer="a")
+        assert len(calls) == 3
+        assert result.scores == {d: 4 for d in DIMENSIONS}
+        assert result.provider == "openai_compatible_sc3"
+
+    def test_pipeline_integration_with_self_consistency(self, toy_docs):
+        """SelfConsistencyJudge 实现协议，可直接进 run_evaluation，摘要带 sc 标记。"""
+        from llm_eval_kit.pipeline import run_evaluation
+        from llm_eval_kit.retrieval import BM25Retriever
+        from llm_eval_kit.synth import generate_eval_set
+
+        judge = judge_module.SelfConsistencyJudge(MockJudge(), n=3)
+        cases = generate_eval_set(toy_docs, num_cases=2, seed=5)
+        answers = {c.qid: "某个系统答案" for c in cases}
+        data = run_evaluation(cases, {"bm25": BM25Retriever(toy_docs)}, judge=judge, answers=answers)
+        assert not data.judge.skipped
+        assert data.judge.provider == "mock_sc3"
+        assert data.judge.n_scored == 2
+
+
+class TestTemperatureParameter:
+    """采样温度：默认 0 保持旧行为，配自一致建议 > 0。"""
+
+    _FOURS_CONTENT = '{"correctness": 4, "relevance": 4, "actionability": 4, "clarity": 4}'
+
+    def test_default_temperature_is_zero(self, monkeypatch):
+        judge = judge_module.OpenAICompatibleJudge(base_url="https://api.example.com/v1", api_key="k", model="m")
+        assert judge.temperature == 0.0
+        captured = {}
+
+        def fake_post(url, payload, *, api_key, timeout):
+            captured["payload"] = payload
+            return {"choices": [{"message": {"content": self._FOURS_CONTENT}}]}
+
+        monkeypatch.setattr(judge_module, "_http_post_json", fake_post)
+        judge.score(query="q", answer="a")
+        assert captured["payload"]["temperature"] == 0.0
+
+    def test_explicit_temperature_sent_in_payload(self, monkeypatch):
+        judge = judge_module.OpenAICompatibleJudge(
+            base_url="https://api.example.com/v1", api_key="k", model="m", temperature=0.7
+        )
+        captured = {}
+
+        def fake_post(url, payload, *, api_key, timeout):
+            captured["payload"] = payload
+            return {"choices": [{"message": {"content": self._FOURS_CONTENT}}]}
+
+        monkeypatch.setattr(judge_module, "_http_post_json", fake_post)
+        judge.score(query="q", answer="a")
+        assert captured["payload"]["temperature"] == 0.7
+
+    def test_temperature_out_of_range_rejected(self):
+        with pytest.raises(ValueError):
+            judge_module.OpenAICompatibleJudge(
+                base_url="https://api.example.com/v1", api_key="k", model="m", temperature=2.5
+            )
+
+    def test_from_env_reads_temperature(self, monkeypatch):
+        monkeypatch.setenv("EVAL_LLM_TEMPERATURE", "0.9")
+        judge = judge_module.OpenAICompatibleJudge.from_env()
+        assert judge.temperature == 0.9
+
+    def test_from_env_default_temperature(self):
+        judge = judge_module.OpenAICompatibleJudge.from_env(environ={})
+        assert judge.temperature == 0.0

@@ -18,7 +18,7 @@
 - **外部检索器接入**：Retriever 协议（duck typing）+ `CallableRetriever` 宽容归一化——任何检索系统（向量库 / Elasticsearch / 自研 RAG）实现一个 `retrieve(query, top_k)` 方法即可同台评测，协议不满足时报可诊断错误，见 [docs/ADAPTERS.md](docs/ADAPTERS.md)
 - **大语料快速路径**：`FastBM25Retriever`（纯 stdlib 倒排索引，打分口径与玩具 BM25 一致）——2 万段语料实测单查询 P50 由 23.4ms 降至 0.6ms（中频词元查询约 40x；查询含高频词元时收益收窄至 2.6x，见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)），复现：`python scripts/bench_large_corpus.py`
 - **评测回归门禁**：`--fail-under 指标名=阈值`（可多次），任一指标低于阈值进程退出码 1 并输出实测值 vs 阈值 vs 差距，可直接作 CI 合并卡点
-- **LLM-as-judge 四维评分**：正确性 / 相关性 / 可操作性 / 清晰度（1-5 分）。provider 可插拔——内置确定性 `MockJudge`（离线可跑、测试用）；`OpenAICompatibleJudge` 读环境变量，未配置 key 时优雅跳过
+- **LLM-as-judge 四维评分**：正确性 / 相关性 / 可操作性 / 清晰度（1-5 分）。provider 可插拔——内置确定性 `MockJudge`（离线可跑、测试用）；`OpenAICompatibleJudge` 读环境变量，未配置 key 时优雅跳过；`SelfConsistencyJudge` 包装任意 judge 采样 n 次按维度多数票，压单次评分噪声
 - **badcase 归因**：对 top-K 未命中查询分类——关键词不匹配 / 语义漂移 / 语料缺失，附可解释 detail
 - **报告输出**：Markdown + HTML 各一份，含指标表格、归因表、评分表与未命中示例
 - **端到端 demo**：内置 24 段玩具语料 + 玩具 BM25/词频/混合检索器，一条命令跑通全链路
@@ -74,7 +74,9 @@ data = run_evaluation(
     cases,
     {"bm25": BM25Retriever(docs), "hybrid": HybridRetriever(docs, alpha=0.6)},
     top_k=10,
-    judge=MockJudge(),                                    # 未配置真实 LLM key 时的离线裁判
+    judge=MockJudge(),                    # 未配置真实 LLM key 时的离线裁判；
+                                          # 真实模型推荐 SelfConsistencyJudge(
+                                          #   OpenAICompatibleJudge.from_env(), n=5)
 )
 md_path, html_path = write_reports(data, Path("reports"))
 ```
@@ -186,8 +188,23 @@ push 到 main 时重新生成，生成步骤同样带 `--fail-under`：指标不
 | `EVAL_LLM_MODEL` | 模型名 | `gpt-4o-mini` |
 | `EVAL_LLM_TIMEOUT` | 请求超时秒数 | `30` |
 | `EVAL_LLM_ALLOW_LOCAL` | 置 `1` 放行 localhost/内网地址（自建 Ollama 等服务用） | `0` |
+| `EVAL_LLM_TEMPERATURE` | 采样温度；配自一致多数票建议 `0.5-0.9` | `0`（确定性） |
 
 安全默认：仅允许 http/https，默认拒绝 localhost、回环、私有与保留地址，凭据只从环境变量读取。
+
+### 自一致多数票（SelfConsistencyJudge）
+
+单次 LLM 评分有噪声。`SelfConsistencyJudge` 包装任意 judge，对同一样本采样 n 次、按维度取多数票：
+
+```python
+from llm_eval_kit import OpenAICompatibleJudge, SelfConsistencyJudge
+
+judge = SelfConsistencyJudge(OpenAICompatibleJudge.from_env(), n=5)
+```
+
+- **容错**：有效票数只要仍构成对 n 的严格多数（`>= n//2 + 1`）就继续；超出容错时抛出第一次失败的原始异常，`LLMUnavailable` 的"管线优雅跳过"语义不因包装而失效；
+- **并列裁决**：多数并列时取最接近样本均值的分值，仍并列取较小者（确定性、保守）；
+- **用法提示**：真实模型请把内层温度设为 `0.5-0.9`（`EVAL_LLM_TEMPERATURE`），`temperature=0` 的采样高度一致，多数票收益有限；provider 名会带上 `_sc{n}` 后缀进入报告，方便区分口径。
 
 ## demo 实测指标
 
@@ -219,7 +236,7 @@ src/llm_eval_kit/
 ├── adapters.py      # Retriever 协议、CallableRetriever 与外部检索器适配
 ├── metrics.py       # Recall@K / MRR / MAP@10 / NDCG@10 / 加权 NDCG（分级相关度）/ bootstrap 置信区间 / 延迟分位数
 ├── gates.py         # 评测回归门禁（--fail-under 的解析与判定）
-├── judge.py         # LLM-as-judge（MockJudge + OpenAICompatibleJudge）
+├── judge.py         # LLM-as-judge（MockJudge + OpenAICompatibleJudge + SelfConsistencyJudge）
 ├── attribution.py   # badcase 三类归因
 ├── report.py        # Markdown + HTML 报告渲染
 ├── pipeline.py      # 端到端评测管线（多管线对比）

@@ -5,7 +5,8 @@ actionability 可操作性 / clarity 清晰度，各 1-5 整数分。
 
 - MockJudge：确定性规则评分（词面重叠等启发式），离线可跑，供测试与 demo；
 - OpenAICompatibleJudge：读环境变量调用 OpenAI 兼容接口，
-  未配置 key 时抛 LLMUnavailable，由管线捕获后优雅跳过。
+  未配置 key 时抛 LLMUnavailable，由管线捕获后优雅跳过；
+- SelfConsistencyJudge：包装任意 judge 采样 n 次按维度取多数票，压单次评分噪声。
 
 凭据只从环境变量读取；代码、示例与测试中不出现任何真实密钥。
 """
@@ -286,16 +287,30 @@ class OpenAICompatibleJudge:
     - EVAL_LLM_BASE_URL：默认 https://api.openai.com/v1；
     - EVAL_LLM_MODEL：默认 gpt-4o-mini；
     - EVAL_LLM_TIMEOUT：请求超时秒数，默认 30；
-    - EVAL_LLM_ALLOW_LOCAL：置 1 放行 localhost/内网地址（自建模型服务）。
+    - EVAL_LLM_ALLOW_LOCAL：置 1 放行 localhost/内网地址（自建模型服务）；
+    - EVAL_LLM_TEMPERATURE：采样温度，默认 0（确定性）；配 SelfConsistencyJudge
+      建议设 0.5-0.9，让多次采样产生差异，多数票才有降噪空间。
     """
 
     name = "openai_compatible"
 
-    def __init__(self, *, base_url: str, api_key: str, model: str, timeout: float = 30.0, allow_local: bool = False):
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout: float = 30.0,
+        allow_local: bool = False,
+        temperature: float = 0.0,
+    ):
         self.base_url = _validate_base_url(base_url, allow_local=allow_local)
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        if not 0.0 <= temperature <= 2.0:
+            raise ValueError(f"temperature 需在 [0, 2] 区间，收到：{temperature}")
+        self.temperature = temperature
 
     @classmethod
     def from_env(cls, environ: dict | None = None) -> OpenAICompatibleJudge:
@@ -306,6 +321,7 @@ class OpenAICompatibleJudge:
             model=env.get("EVAL_LLM_MODEL", DEFAULT_MODEL),
             timeout=float(env.get("EVAL_LLM_TIMEOUT", "30")),
             allow_local=env.get("EVAL_LLM_ALLOW_LOCAL", "") in ("1", "true", "yes"),
+            temperature=float(env.get("EVAL_LLM_TEMPERATURE", "0")),
         )
 
     @property
@@ -318,7 +334,7 @@ class OpenAICompatibleJudge:
         prompt = _JUDGE_PROMPT.format(query=query, reference=reference, context=context, answer=answer)
         payload = {
             "model": self.model,
-            "temperature": 0,
+            "temperature": self.temperature,
             "messages": [{"role": "user", "content": prompt}],
         }
         url = self.base_url.rstrip("/") + "/chat/completions"
@@ -350,3 +366,58 @@ def judge_summary(scores: list[JudgeScore]) -> JudgeSummary:
         values = [s.scores[dim] for s in scores if dim in s.scores]
         means[dim] = round(sum(values) / len(values), 2) if values else 0.0
     return JudgeSummary(provider=scores[0].provider, n_scored=len(scores), dim_means=means)
+
+
+def _majority_vote(values: list[int]) -> int:
+    """多数票；并列时取最接近样本均值的分值，仍并列取较小者（确定性、保守）。"""
+    counts: dict[int, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    top = max(counts.values())
+    candidates = sorted(value for value, count in counts.items() if count == top)
+    if len(candidates) == 1:
+        return candidates[0]
+    mean = sum(values) / len(values)
+    return min(candidates, key=lambda value: (abs(value - mean), value))
+
+
+class SelfConsistencyJudge:
+    """自一致裁判：同一输入采样 n 次，各维度取多数票，压单次评分噪声。
+
+    - provider 无关：包装任意 JudgeProvider（MockJudge / OpenAICompatibleJudge 均可），
+      实现 JudgeProvider 协议，可直接传给 run_evaluation；
+    - 容错语义：只要有效票数仍能构成对 n 的严格多数（>= n//2 + 1）就继续，
+      超出容错时抛出第一次失败的原始异常——LLMUnavailable 等"管线跳过"语义因此保留；
+    - 并列处理：取最接近样本均值的分值，仍并列取较小者（确定性）；
+    - 用法提示：真实模型请把内层 judge 的 temperature 设为 0.5-0.9（见
+      OpenAICompatibleJudge 的 EVAL_LLM_TEMPERATURE），采样高度一致时多数票收益有限。
+
+    >>> judge = SelfConsistencyJudge(OpenAICompatibleJudge.from_env(), n=5)
+    """
+
+    def __init__(self, inner: JudgeProvider, *, n: int = 5):
+        if n < 1:
+            raise ValueError(f"采样次数 n 必须 >= 1，收到：{n}")
+        self.inner = inner
+        self.n = n
+
+    @property
+    def name(self) -> str:
+        return f"{self.inner.name}_sc{self.n}"
+
+    def score(self, *, query: str, answer: str, reference: str = "", context: str = "") -> JudgeScore:
+        needed = self.n // 2 + 1  # 对 n 的严格多数
+        votes: list[JudgeScore] = []
+        first_error: LLMJudgeError | None = None
+        for attempt in range(1, self.n + 1):
+            try:
+                votes.append(self.inner.score(query=query, answer=answer, reference=reference, context=context))
+            except LLMJudgeError as exc:
+                if first_error is None:
+                    first_error = exc
+                if len(votes) + (self.n - attempt) < needed:
+                    raise first_error from exc
+        scores = {dim: _majority_vote([v.scores[dim] for v in votes]) for dim in DIMENSIONS}
+        rationale = next((v.rationale for v in votes if v.rationale), "")
+        prefix = f"自一致采样 n={self.n}（有效票 {len(votes)}），按维度多数票；"
+        return JudgeScore(provider=self.name, scores=scores, rationale=prefix + rationale)

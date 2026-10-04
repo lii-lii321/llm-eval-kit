@@ -31,6 +31,7 @@ from .judge import (
     LLMUnavailable,
     MockJudge,
     OpenAICompatibleJudge,
+    SelfConsistencyJudge,
     judge_summary,
 )
 from .metrics import (
@@ -51,7 +52,7 @@ from .retrieval import BaseRetriever, BM25Retriever, HybridRetriever, RetrievalR
 from .synth import EvalCase, extract_phrases, generate_eval_set
 from .tokenize import tokenize
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "Badcase",
@@ -86,6 +87,7 @@ __all__ = [
     "RetrieverAdapter",
     "RetrieverProtocolError",
     "RetrievalResult",
+    "SelfConsistencyJudge",
     "TFRetriever",
     "__version__",
     "as_eval_retriever",
