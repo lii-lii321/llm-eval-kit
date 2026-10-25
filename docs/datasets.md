@@ -8,6 +8,12 @@ llm-eval-kit 支持两种构造评测集的方式：规则合成（`generate_eva
 种子示例：[`examples/dataset_demo.jsonl`](../examples/dataset_demo.jsonl)
 （**合成 demo 数据，非人工标注**，`_meta.provenance` 已明确标注）。
 
+真实语料进阶范例：[`examples/dataset_projects.jsonl`](../examples/dataset_projects.jsonl)
+——四个真实仓库文档（998 分块）上 48 条自然问法查询，每条 `relevant_doc_ids` 逐条核对
+分块原文后定标，含分级相关度与 badcase 备注；语料目录
+[`examples/corpus_projects/`](../examples/corpus_projects/)，实测数字见
+[PERFORMANCE.md](PERFORMANCE.md)「真实语料实测」段。
+
 ## 文件格式规范
 
 - 编码 UTF-8，扩展名建议 `.jsonl`；每行一个独立 JSON 对象，行间无逗号；

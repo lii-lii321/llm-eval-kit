@@ -177,3 +177,40 @@ python scripts/bench_large_corpus.py --n-docs 20000 --n-queries 100 --seed 42
 
 生成语料为合成文本（非真实业务语料），数字表征算法量级差异，不构成生产性能承诺；
 两种实现均为单机单线程纯 Python，未做并发与持久化。
+
+## 真实语料实测（projects corpus，2026-10-25）
+
+首次在**真实文档语料**上完整走通「外部语料 + 人工核对标注 + 回归门禁」通道：
+
+- 语料：`examples/corpus_projects/`——research-lab / credit-risk-modeling / jd-resume-matcher 与本仓库四个真实仓库的文档（README、ADR、手册、CHANGELOG、评估报告、JD/简历示例），30 个文件、998 分块（`--max-chars` 默认 300）；
+- 评测集：[`examples/dataset_projects.jsonl`](../examples/dataset_projects.jsonl)——48 条自然问法的中文查询，每条的 `relevant_doc_ids` 均逐条核对分块原文后定标（定位关键词与查询措辞刻意不同，避免按检索结果反标），含分级相关度与 badcase 备注，`_meta.provenance` 如实标注标注方式；
+- 门禁：`--fail-under recall_at_5=0.28 --fail-under recall_at_10=0.45 --fail-under mrr=0.40 --fail-under weighted_ndcg_at_10=0.30`，实测通过（退出码 0）。
+
+```bash
+python -m llm_eval_kit.cli --corpus-dir examples/corpus_projects \
+  --dataset examples/dataset_projects.jsonl --out reports_projects \
+  --fail-under recall_at_5=0.28 --fail-under recall_at_10=0.45 \
+  --fail-under mrr=0.40 --fail-under weighted_ndcg_at_10=0.30
+```
+
+本机实测（Windows / Python 3.10.9，2026-10-25）：
+
+| 管线 | Recall@1 | Recall@5 | Recall@10 | MRR | MAP@10 | NDCG@10 | Weighted NDCG@10 | P50(ms) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| bm25（主管线） | 0.0910 | 0.3191 | 0.4806 | 0.4475 | 0.2417 | 0.3609 | 0.3421 | 2.2 |
+| tf | 0.0719 | 0.2472 | 0.4260 | 0.3089 | 0.1789 | 0.2809 | 0.2688 | 3.7 |
+| hybrid | 0.1014 | 0.3132 | 0.4562 | 0.4346 | 0.2360 | 0.3479 | 0.3370 | 7.7 |
+| rrf | 0.0892 | 0.2906 | 0.4615 | 0.4056 | 0.2214 | 0.3338 | 0.3200 | 8.0 |
+
+解读（与 demo 饱和数字对照，正是这套工具要暴露的东西）：
+
+- **词面检索在真实语料上远未饱和**：Recall@5 从 demo 的 0.96 掉到 0.32——真实文档 40 倍大、
+  查询是自然问法（「环境没配好跑起来就报错」vs 文档里的「doctor 体检」），
+  词面重叠不再能解决一切；
+- badcase 归因（bm25）：关键词不匹配 2 条、**语义漂移 9 条**——这正是 README 已知限制里
+  「中文分词是字符二元组近似 + 无语义理解」在真实语料上的量化体现，
+  也是接真实向量检索/嵌入模型能拿到的提升空间；
+- hybrid/rrf 未跑赢单路 bm25：本语料的困难样本以语义漂移为主、词面歧义少，
+  融合策略的收益场景（词面歧义 + 多路互补）在此语料中占比不足，如实记录；
+- 48 条查询的 bootstrap 区间宽度仍受限，本表数字表征「真实语料上的量级与差异」，
+  不构成对任意语料的性能承诺；标注集为 v0.1（48 条），扩标注后数字会更新。

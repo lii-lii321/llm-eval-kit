@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM/RAG 评测报告</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+         color: #334155; background: #fff; margin: 0; }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; line-height: 1.7; }
+  h1, h2, h3 { color: #1a365d; font-weight: 600; }
+  h1 { font-size: 1.6rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; }
+  table { border-collapse: collapse; margin: 16px 0; width: 100%; font-size: 0.92rem; }
+  th, td { border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left; }
+  th { background: #f8fafc; color: #1a365d; }
+  code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-size: 0.88em; }
+  .meta { color: #64748b; font-size: 0.9rem; }
+  .skipped { border-left: 3px solid #2563eb; background: #f8fafc; padding: 10px 14px; }
+  .note { color: #64748b; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>LLM/RAG 评测报告</h1>
+<p class="meta">生成时间 2026-10-25T19:43:39 ｜ 语料 998 篇 ｜ 评测集 48 条 ｜ 检索深度 top-K 10</p>
+<h2>检索指标</h2><table><thead><tr><th>管线</th><th>Recall@1</th><th>Recall@3</th><th>Recall@5</th><th>Recall@10</th><th>MRR</th><th>MAP@10</th><th>NDCG@10</th><th>Weighted NDCG@10</th><th>命中率</th><th>P50(ms)</th><th>P95(ms)</th></tr></thead><tbody><tr><td>bm25</td><td>0.0910 [0.0493, 0.1299]</td><td>0.2385 [0.1632, 0.3097]</td><td>0.3191 [0.2340, 0.4021]</td><td>0.4806 [0.3767, 0.5847]</td><td>0.4475 [0.3354, 0.5507]</td><td>0.2417 [0.1772, 0.3015]</td><td>0.3609 [0.2828, 0.4333]</td><td>0.3421 [0.2671, 0.4089]</td><td>0.7708 [0.6458, 0.8958]</td><td>2.29</td><td>4.25</td></tr><tr><td>tf</td><td>0.0719 [0.0250, 0.1292]</td><td>0.1552 [0.0910, 0.2299]</td><td>0.2472 [0.1691, 0.3358]</td><td>0.4260 [0.3201, 0.5313]</td><td>0.3089 [0.2057, 0.4109]</td><td>0.1789 [0.1174, 0.2477]</td><td>0.2809 [0.2058, 0.3620]</td><td>0.2688 [0.1974, 0.3500]</td><td>0.7083 [0.5833, 0.8333]</td><td>3.86</td><td>5.78</td></tr><tr><td>hybrid</td><td>0.1014 [0.0476, 0.1615]</td><td>0.2125 [0.1424, 0.2830]</td><td>0.3132 [0.2306, 0.4000]</td><td>0.4562 [0.3555, 0.5604]</td><td>0.4346 [0.3247, 0.5376]</td><td>0.2360 [0.1680, 0.3054]</td><td>0.3479 [0.2638, 0.4255]</td><td>0.3370 [0.2599, 0.4094]</td><td>0.7500 [0.6250, 0.8750]</td><td>6.92</td><td>9.95</td></tr><tr><td>rrf</td><td>0.0892 [0.0399, 0.1486]</td><td>0.2108 [0.1427, 0.2743]</td><td>0.2906 [0.2107, 0.3747]</td><td>0.4615 [0.3552, 0.5636]</td><td>0.4056 [0.2976, 0.5087]</td><td>0.2214 [0.1591, 0.2854]</td><td>0.3338 [0.2602, 0.4070]</td><td>0.3200 [0.2471, 0.3906]</td><td>0.7500 [0.6250, 0.8750]</td><td>6.58</td><td>8.65</td></tr></tbody></table><p class="note">方括号内为 bootstrap 置信区间（百分位法，置信水平 95%，重采样 1000 次）。</p><p class="note">Weighted NDCG@10 为分级相关度指标（指数增益 2^g − 1，按 grades 计算，理想 DCG 用全部相关文档增益排序）；查询未标注分级的文档按增益 1（二元口径）计入。</p>
+<h2>badcase 归因</h2><table><thead><tr><th>管线</th><th>关键词不匹配</th><th>语义漂移</th><th>语料缺失</th><th>未命中合计</th></tr></thead><tbody><tr><td>bm25</td><td>2</td><td>9</td><td>0</td><td>11</td></tr><tr><td>tf</td><td>2</td><td>12</td><td>0</td><td>14</td></tr><tr><td>hybrid</td><td>2</td><td>10</td><td>0</td><td>12</td></tr><tr><td>rrf</td><td>2</td><td>10</td><td>0</td><td>12</td></tr></tbody></table>
+<h3>未命中示例（主管线：bm25，最多 5 条）</h3><ul><li><code>q003</code>【语义漂移】几十万行的大 CSV 导进来会不会把内存撑爆？ —— 查询与 rlab__CHANGELOG#010 有 1 个重叠词元，但仍被其他文档挤出 top-10</li><li><code>q004</code>【语义漂移】AI 生成的研究结论会不会是编的数字？ —— 查询与 rlab__PROJECT_BRIEF#001 有 3 个重叠词元，但仍被其他文档挤出 top-10</li><li><code>q007</code>【语义漂移】界面能切换成英文吗？ —— 查询与 rlab__CHANGELOG#013 有 1 个重叠词元，但仍被其他文档挤出 top-10</li><li><code>q012</code>【语义漂移】评测结果怎么接进 CI，防止检索质量悄悄回退？ —— 查询与 lek__README#011 有 2 个重叠词元，但仍被其他文档挤出 top-10</li><li><code>q018</code>【语义漂移】两路检索的结果怎么合并成一个排序？ —— 查询与 lek__PERFORMANCE#008 有 1 个重叠词元，但仍被其他文档挤出 top-10</li></ul>
+<h2>LLM-as-judge</h2><p>无可评分样本（评测集未提供参考答案，或未传入系统答案）。</p>
+<p class="note">语料来源：外部目录 examples\corpus_projects（30 个文件，998 个文本块）；切块上限 300 字符</p>
+<p class="note">评测集：examples\dataset_projects.jsonl</p>
+<p class="note">评测集统计：共 48 条，平均相关文档 2.96 篇；查询长度 min/中位/均值/max = 10/20/19.4/30 字符；长度分布：1-10 1 条，11-20 29 条，21-30 18 条</p>
+<p class="note">评测集 _meta：{&quot;annotated_at&quot;: &quot;2026-10-25&quot;, &quot;annotator&quot;: &quot;llm-eval-kit 维护者（LLM 辅助定位候选分块 + 逐条人工核对分块原文后定标；定位关键词与查询措辞刻意不同，避免按检索结果反标）&quot;, &quot;corpus&quot;: &quot;AI 项目知识库：research-lab / llm-eval-kit / credit-risk-modeling / jd-resume-matcher 四个仓库的真实文档（README、ADR、改进/UX 手册、CHANGELOG、复现专栏、评估报告、JD/简历示例），语料目录 examples/corpus_projects/，998 分块（max_chars=300，doc_id=文件名#序号）&quot;, &quot;provenance&quot;: &quot;real project docs; queries LLM-assisted then doc-ground verified; not user-log annotated; 扩标注战役见 docs/datasets.md 标注指南&quot;, &quot;version&quot;: &quot;0.1.0&quot;}</p>
+<p class="note">数字由外部语料实测得出，仅代表本次语料规模，机器与运行环境不同会有差异。</p>
+</main>
+</body>
+</html>

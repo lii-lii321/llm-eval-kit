@@ -256,7 +256,7 @@ docs/datasets.md     # 评测数据集格式规范与人工标注指南
 
 ## 已知限制
 
-- **合成查询偏词面化**：规则生成器基于词面统计，无语义理解；长中文串按虚词切分 + 截断到 6 字，可能产出「常见维度有正」这类不自然查询。评测查询不再只有合成一条路——人工标注查询集现已支持（`--dataset` / `load_dataset`，见 [docs/datasets.md](docs/datasets.md)），生产级合成建议用 LLM 合成或真实查询日志
+- **合成查询偏词面化**：规则生成器基于词面统计，无语义理解；长中文串按虚词切分 + 截断到 6 字，可能产出「常见维度有正」这类不自然查询。评测查询不再只有合成一条路——人工标注查询集现已支持（`--dataset` / `load_dataset`，见 [docs/datasets.md](docs/datasets.md)），生产级合成建议用 LLM 合成或真实查询日志。真实语料的人工核对标注范例：[`examples/dataset_projects.jsonl`](examples/dataset_projects.jsonl)（998 块真实项目文档语料上 48 条逐条核对定标的查询，实测数字见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md) 真实语料段）
 - **中文分词是字符二元组近似**：不是真正的中文分词，跨词二元组（如「索评」）会引入噪声；对检索效果敏感的场景建议接 jieba 或真实向量检索
 - **检索器是单机实现**：BM25/TF 玩具版全量扫描，适合几百块以内的语料；大语料请用 `FastBM25Retriever`（倒排索引，2 万段实测查询 P50 0.6ms vs 玩具版 23.4ms）——但查询被语料头部高频词元主导时收益会收窄到约 2.6x（扫描量占比与两组实测见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)）；得分为 0（零词面重叠）的文档不返回结果；均非生产级检索引擎
 - **外部检索器的 badcase 归因依赖 doc_texts**：外部检索器不提供 doc_id → 原文映射时，归因会把所有未命中归为"语料缺失"，与真实失败机理可能不符（机制与建议见 [docs/ADAPTERS.md](docs/ADAPTERS.md)）；显式传入 `doc_texts` 可获得正确归因
