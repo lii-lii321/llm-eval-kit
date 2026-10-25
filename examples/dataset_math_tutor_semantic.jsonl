@@ -1,0 +1,13 @@
+{"_meta": {"corpus": "Math_Tutor_RAG 智能错题本真实语料：12 条金标考点条目（tests/test_retrieval_quality.py _GOLDEN）+ 从其 SQLite 只读导出的真实错题作干扰项（doc_id=文件名#000，单文件单条）", "annotated_at": "2026-10-25", "annotator": "llm-eval-kit 维护者（金标查询来自 Math_Tutor_RAG 检索质量门禁语料；语料经只读导出）", "version": "0.1.0", "provenance": "real user data, read-only export from Math_Tutor_RAG (SQLite mode=ro + test constants); queries are its golden student-style paraphrases and keyword probes"}}
+{"query_id": "sem_01", "query": "判别式大于零说明方程的根有什么特点", "relevant_doc_ids": ["golden_01#000"], "notes": "金标语料 G01，学生口语句（语义改写组口径），tags=['方程']"}
+{"query_id": "sem_02", "query": "直角三角形三条边之间有什么关系", "relevant_doc_ids": ["golden_02#000"], "notes": "金标语料 G02，学生口语句（语义改写组口径），tags=['几何']"}
+{"query_id": "sem_03", "query": "二次函数的顶点坐标应该怎么求", "relevant_doc_ids": ["golden_03#000"], "notes": "金标语料 G03，学生口语句（语义改写组口径），tags=['函数']"}
+{"query_id": "sem_04", "query": "等差数列的求和公式是什么", "relevant_doc_ids": ["golden_04#000"], "notes": "金标语料 G04，学生口语句（语义改写组口径），tags=['数列']"}
+{"query_id": "sem_05", "query": "正弦定理可以用哪些类型题目", "relevant_doc_ids": ["golden_05#000"], "notes": "金标语料 G05，学生口语句（语义改写组口径），tags=['三角']"}
+{"query_id": "sem_06", "query": "圆的切线有哪些性质", "relevant_doc_ids": ["golden_06#000"], "notes": "金标语料 G06，学生口语句（语义改写组口径），tags=['圆']"}
+{"query_id": "sem_07", "query": "掷一枚骰子掷到偶数的概率是多少", "relevant_doc_ids": ["golden_07#000"], "notes": "金标语料 G07，学生口语句（语义改写组口径），tags=['概率']"}
+{"query_id": "sem_08", "query": "数据里出现特别大的值时该看中位数还是平均数", "relevant_doc_ids": ["golden_08#000"], "notes": "金标语料 G08，学生口语句（语义改写组口径），tags=['统计']"}
+{"query_id": "sem_09", "query": "如何使用十字相乘的方法分解因式", "relevant_doc_ids": ["golden_09#000"], "notes": "金标语料 G09，学生口语句（语义改写组口径），tags=['代数']"}
+{"query_id": "sem_10", "query": "为什么解分式方程最后一定要验根", "relevant_doc_ids": ["golden_10#000"], "notes": "金标语料 G10，学生口语句（语义改写组口径），tags=['方程']"}
+{"query_id": "sem_11", "query": "判定两个三角形全等有哪几种方法", "relevant_doc_ids": ["golden_11#000"], "notes": "金标语料 G11，学生口语句（语义改写组口径），tags=['几何']"}
+{"query_id": "sem_12", "query": "抛物线向左右平移的规律", "relevant_doc_ids": ["golden_12#000"], "notes": "金标语料 G12，学生口语句（语义改写组口径），tags=['函数']"}

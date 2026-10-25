@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM/RAG 评测报告</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+         color: #334155; background: #fff; margin: 0; }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; line-height: 1.7; }
+  h1, h2, h3 { color: #1a365d; font-weight: 600; }
+  h1 { font-size: 1.6rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; }
+  table { border-collapse: collapse; margin: 16px 0; width: 100%; font-size: 0.92rem; }
+  th, td { border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left; }
+  th { background: #f8fafc; color: #1a365d; }
+  code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-size: 0.88em; }
+  .meta { color: #64748b; font-size: 0.9rem; }
+  .skipped { border-left: 3px solid #2563eb; background: #f8fafc; padding: 10px 14px; }
+  .note { color: #64748b; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>LLM/RAG 评测报告</h1>
+<p class="meta">生成时间 2026-10-25T20:17:28 ｜ 语料 83 篇 ｜ 评测集 12 条 ｜ 检索深度 top-K 10</p>
+<h2>检索指标</h2><table><thead><tr><th>管线</th><th>Recall@1</th><th>Recall@3</th><th>Recall@5</th><th>Recall@10</th><th>MRR</th><th>MAP@10</th><th>NDCG@10</th><th>Weighted NDCG@10</th><th>命中率</th><th>P50(ms)</th><th>P95(ms)</th></tr></thead><tbody><tr><td>bm25</td><td>0.9167 [0.7500, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>0.9583 [0.8750, 1.0000]</td><td>0.9583 [0.8750, 1.0000]</td><td>0.9692 [0.9077, 1.0000]</td><td>—</td><td>1.0000 [1.0000, 1.0000]</td><td>0.11</td><td>0.31</td></tr><tr><td>tf</td><td>0.9167 [0.7500, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>0.9583 [0.8750, 1.0000]</td><td>0.9583 [0.8750, 1.0000]</td><td>0.9692 [0.9077, 1.0000]</td><td>—</td><td>1.0000 [1.0000, 1.0000]</td><td>0.28</td><td>0.34</td></tr><tr><td>hybrid</td><td>0.9167 [0.7500, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>0.9583 [0.8750, 1.0000]</td><td>0.9583 [0.8750, 1.0000]</td><td>0.9692 [0.9077, 1.0000]</td><td>—</td><td>1.0000 [1.0000, 1.0000]</td><td>0.33</td><td>0.50</td></tr><tr><td>rrf</td><td>0.9167 [0.7500, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>1.0000 [1.0000, 1.0000]</td><td>0.9583 [0.8750, 1.0000]</td><td>0.9583 [0.8750, 1.0000]</td><td>0.9692 [0.9077, 1.0000]</td><td>—</td><td>1.0000 [1.0000, 1.0000]</td><td>0.34</td><td>1.33</td></tr></tbody></table><p class="note">方括号内为 bootstrap 置信区间（百分位法，置信水平 95%，重采样 1000 次）。</p><p class="note">Weighted NDCG@10 未计算（显示 —）：本次评测集未提供 grades 分级标注，不输出 0 冒充可用。</p>
+<h2>badcase 归因</h2><table><thead><tr><th>管线</th><th>关键词不匹配</th><th>语义漂移</th><th>语料缺失</th><th>未命中合计</th></tr></thead><tbody><tr><td>bm25</td><td>0</td><td>0</td><td>0</td><td>0</td></tr><tr><td>tf</td><td>0</td><td>0</td><td>0</td><td>0</td></tr><tr><td>hybrid</td><td>0</td><td>0</td><td>0</td><td>0</td></tr><tr><td>rrf</td><td>0</td><td>0</td><td>0</td><td>0</td></tr></tbody></table>
+<h2>LLM-as-judge</h2><p>无可评分样本（评测集未提供参考答案，或未传入系统答案）。</p>
+<p class="note">语料来源：外部目录 examples\corpus_math_tutor（32 个文件，83 个文本块）；切块上限 300 字符</p>
+<p class="note">评测集：examples\dataset_math_tutor_semantic.jsonl</p>
+<p class="note">评测集统计：共 12 条，平均相关文档 1.00 篇；查询长度 min/中位/均值/max = 9/15/14.3/21 字符；长度分布：1-10 1 条，11-20 10 条，21-30 1 条</p>
+<p class="note">评测集 _meta：{&quot;annotated_at&quot;: &quot;2026-10-25&quot;, &quot;annotator&quot;: &quot;llm-eval-kit 维护者（金标查询来自 Math_Tutor_RAG 检索质量门禁语料；语料经只读导出）&quot;, &quot;corpus&quot;: &quot;Math_Tutor_RAG 智能错题本真实语料：12 条金标考点条目（tests/test_retrieval_quality.py _GOLDEN）+ 从其 SQLite 只读导出的真实错题作干扰项（doc_id=文件名#000，单文件单条）&quot;, &quot;provenance&quot;: &quot;real user data, read-only export from Math_Tutor_RAG (SQLite mode=ro + test constants); queries are its golden student-style paraphrases and keyword probes&quot;, &quot;version&quot;: &quot;0.1.0&quot;}</p>
+<p class="note">数字由外部语料实测得出，仅代表本次语料规模，机器与运行环境不同会有差异。</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,1 @@
+curl smoke question: solve x2=4

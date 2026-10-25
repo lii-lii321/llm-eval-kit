@@ -1,0 +1,13 @@
+{"_meta": {"corpus": "Math_Tutor_RAG 智能错题本真实语料：12 条金标考点条目（tests/test_retrieval_quality.py _GOLDEN）+ 从其 SQLite 只读导出的真实错题作干扰项（doc_id=文件名#000，单文件单条）", "annotated_at": "2026-10-25", "annotator": "llm-eval-kit 维护者（金标查询来自 Math_Tutor_RAG 检索质量门禁语料；语料经只读导出）", "version": "0.1.0", "provenance": "real user data, read-only export from Math_Tutor_RAG (SQLite mode=ro + test constants); queries are its golden student-style paraphrases and keyword probes"}}
+{"query_id": "kw_01", "query": "判别式", "relevant_doc_ids": ["golden_01#000"], "notes": "金标语料 G01，关键词查询（目标题独有词，词面口径）"}
+{"query_id": "kw_02", "query": "勾股定理", "relevant_doc_ids": ["golden_02#000"], "notes": "金标语料 G02，关键词查询（目标题独有词，词面口径）"}
+{"query_id": "kw_03", "query": "顶点坐标", "relevant_doc_ids": ["golden_03#000"], "notes": "金标语料 G03，关键词查询（目标题独有词，词面口径）"}
+{"query_id": "kw_04", "query": "等差数列", "relevant_doc_ids": ["golden_04#000"], "notes": "金标语料 G04，关键词查询（目标题独有词，词面口径）"}
+{"query_id": "kw_05", "query": "正弦定理", "relevant_doc_ids": ["golden_05#000"], "notes": "金标语料 G05，关键词查询（目标题独有词，词面口径）"}
+{"query_id": "kw_06", "query": "切线", "relevant_doc_ids": ["golden_06#000"], "notes": "金标语料 G06，关键词查询（目标题独有词，词面口径）"}
+{"query_id": "kw_07", "query": "古典概型", "relevant_doc_ids": ["golden_07#000"], "notes": "金标语料 G07，关键词查询（目标题独有词，词面口径）"}
+{"query_id": "kw_08", "query": "中位数", "relevant_doc_ids": ["golden_08#000"], "notes": "金标语料 G08，关键词查询（目标题独有词，词面口径）"}
+{"query_id": "kw_09", "query": "十字相乘", "relevant_doc_ids": ["golden_09#000"], "notes": "金标语料 G09，关键词查询（目标题独有词，词面口径）"}
+{"query_id": "kw_10", "query": "分式方程", "relevant_doc_ids": ["golden_10#000"], "notes": "金标语料 G10，关键词查询（目标题独有词，词面口径）"}
+{"query_id": "kw_11", "query": "全等三角形", "relevant_doc_ids": ["golden_11#000"], "notes": "金标语料 G11，关键词查询（目标题独有词，词面口径）"}
+{"query_id": "kw_12", "query": "抛物线", "relevant_doc_ids": ["golden_12#000"], "notes": "金标语料 G12，关键词查询（目标题独有词，词面口径）"}

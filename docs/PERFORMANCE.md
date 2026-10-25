@@ -214,3 +214,42 @@ python -m llm_eval_kit.cli --corpus-dir examples/corpus_projects \
   融合策略的收益场景（词面歧义 + 多路互补）在此语料中占比不足，如实记录；
 - 48 条查询的 bootstrap 区间宽度仍受限，本表数字表征「真实语料上的量级与差异」，
   不构成对任意语料的性能承诺；标注集为 v0.1（48 条），扩标注后数字会更新。
+
+## 跨项目对照实测（Math_Tutor_RAG 金标集，2026-10-25）
+
+用 Math_Tutor_RAG（智能错题本）自己的检索质量金标集做了一次跨项目对照——
+同一个真实系统、同一批查询，分别用它内置的三路检索与本仓库的 BM25 各跑一遍：
+
+- 语料（只读导出，未改其任何文件）：[`examples/corpus_math_tutor/`](../examples/corpus_math_tutor/)——
+  其检索质量门禁的 12 条金标考点条目（`tests/test_retrieval_quality.py::_GOLDEN`）
+  + 从其 SQLite（`mode=ro` 只读打开）导出的 20 条真实错题作干扰项，32 文件 / 83 分块；
+- 查询：[`examples/dataset_math_tutor_semantic.jsonl`](../examples/dataset_math_tutor_semantic.jsonl)
+  12 条「学生口语句」金标问法（语义改写组）与
+  [`examples/dataset_math_tutor_keyword.jsonl`](../examples/dataset_math_tutor_keyword.jsonl)
+  12 条关键词探针（词面组），相关文档均为对应金标条目（单相关文档）；
+  导出脚本：[`scripts/export_math_tutor_corpus.py`](../scripts/export_math_tutor_corpus.py)。
+
+对照数字（语义改写组，12 条金标问法）：
+
+| 实现 | Recall@3 | Recall@5 | MRR | P50(ms) | 口径说明 |
+|---|---:|---:|---:|---:|---|
+| Math_Tutor_RAG 关键词路（SQL LIKE 整串子串） | 0.000 | 0.000 | 0.000 | <1 | 其 `data/eval_report.json`（2026-10-25） |
+| Math_Tutor_RAG 向量路（ChromaDB 内置嵌入） | 0.667 | 0.917 | 0.542 | 266 | 同上，用户域内 12 条语料 |
+| Math_Tutor_RAG RRF 融合 | 0.667 | 0.917 | 0.542 | <1 | 同上 |
+| **本仓库 bm25（CJK 字符二元组）** | **1.000** | **1.000** | **0.958** | 0.11 | 32 文件 / 83 分块（含 20 条真实错题干扰项） |
+
+关键词探针组：本仓库 bm25 Recall@1=1.0 / MRR=1.0（其关键词查询为目标题独有词，
+BM25 是子串匹配的严格超集，理应满分——这组是语料一致性校验）。
+
+解读与建议（供 Math_Tutor_RAG 参考，未改其代码）：
+
+- 其关键词路在语义问法上全灭是**实现口径所致而非词面检索的上限**：整串 LIKE 只能命中
+  原文子串，学生口语句与原文零子串重叠；换成分词 + 词频打分的 BM25（不必上嵌入模型）
+  即可在这批金标上拿满召回；
+- MRR 对比（0.958 vs 0.542）说明 BM25 的排序质量也显著更优，且延迟低约 3 个数量级；
+- **可行改进**：RRF 的关键词路从「LIKE 子串过滤」升级为「BM25 打分」（语料小时纯 Python
+  即可，参考本仓库 `FastBM25Retriever` 的 stdlib 倒排实现），向量路保留语义互补，
+  RRF 融合的收益空间反而更大；
+- 边界如实声明：金标仅 12 条、单相关文档；两侧语料范围不同（其向量路在用户域内 12 条
+  上评测，本仓库在 32 文件含干扰项上评测——语料更大理应更难，结论方向不受此影响，
+  但具体数值不可直接外推）；其嵌入为 ChromaDB 内置模型，换强嵌入模型结果会不同。
